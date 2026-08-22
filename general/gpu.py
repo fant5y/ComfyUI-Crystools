@@ -213,22 +213,31 @@ class CGPUInfo:
 
             if self.anygpuLoaded and self.cuda and (self.cudaAvailable or self.pyamdLoaded or self.jtopLoaded or self.amdsmiLoaded):
                 for deviceIndex in range(self.cudaDevicesFound):
-                    deviceHandle = self.deviceGetHandleByIndex(deviceIndex)
-
                     gpuUtilization = -1
                     vramPercent = -1
                     vramUsed = -1
                     vramTotal = -1
                     gpuTemperature = -1
 
+                    try:
+                        deviceHandle = self.deviceGetHandleByIndex(deviceIndex)
+                    except Exception as e:
+                        self._handle_metric_error('handle', e)
+                        gpus.append({
+                            'gpu_utilization': gpuUtilization,
+                            'gpu_temperature': gpuTemperature,
+                            'vram_total': vramTotal,
+                            'vram_used': vramUsed,
+                            'vram_used_percent': vramPercent,
+                        })
+                        continue
+
                     # GPU Utilization
                     if self.switchGPU and self.gpusUtilization[deviceIndex]:
                         try:
                             gpuUtilization = self.deviceGetUtilizationRates(deviceHandle)
                         except Exception as e:
-                            logger.error('Could not get GPU utilization. ' + str(e))
-                            logger.error('Monitor of GPU is turning off.')
-                            self.switchGPU = False
+                            self._handle_metric_error('utilization', e, 'switchGPU')
 
                     if self.switchVRAM and self.gpusVRAM[deviceIndex]:
                         try:
@@ -241,16 +250,14 @@ class CGPUInfo:
                                 vramPercent = vramUsed / vramTotal * 100
 
                         except Exception as e:
-                            logger.error('Could not get GPU memory info. ' + str(e))
-                            self.switchVRAM = False
+                            self._handle_metric_error('memory info', e, 'switchVRAM')
 
                     # Temperature
                     if self.switchTemperature and self.gpusTemperature[deviceIndex]:
                         try:
                             gpuTemperature = self.deviceGetTemperature(deviceHandle)
                         except Exception as e:
-                            logger.error('Could not get GPU temperature. Turning off this feature. ' + str(e))
-                            self.switchTemperature = False
+                            self._handle_metric_error('temperature', e, 'switchTemperature')
 
                     gpus.append({
                         'gpu_utilization': gpuUtilization,
@@ -410,7 +417,12 @@ class CGPUInfo:
 
     def deviceGetHandleByIndex(self, index):
         if self.pynvmlLoaded:
-            return self.pynvml.nvmlDeviceGetHandleByIndex(index)
+            try:
+                return self.pynvml.nvmlDeviceGetHandleByIndex(index)
+            except Exception as e:
+                if self._recover_nvidia_nvml(e):
+                    return self.pynvml.nvmlDeviceGetHandleByIndex(index)
+                raise
         elif self.amdsmiLoaded:
             return index
         elif self.pyamdLoaded:
@@ -634,6 +646,34 @@ class CGPUInfo:
             return func(*args, **kwargs)
         finally:
             logging.disable(previous_disable_level)
+
+    def _handle_metric_error(self, metric_name, error, switch_attr=None):
+        if self.pynvmlLoaded:
+            logger.warning(f'Could not get NVIDIA GPU {metric_name}; will retry. {error}')
+            self._recover_nvidia_nvml(error)
+            return
+
+        logger.error(f'Could not get GPU {metric_name}. {error}')
+        if switch_attr is not None:
+            logger.error(f'Monitor of GPU {metric_name} is turning off.')
+            setattr(self, switch_attr, False)
+
+    def _recover_nvidia_nvml(self, error):
+        if not self.pynvmlLoaded or self.pynvml is None:
+            return False
+
+        logger.debug(f'Attempting NVIDIA NVML recovery after monitoring error. {error}')
+        try:
+            self.pynvml.nvmlShutdown()
+        except Exception:
+            pass
+
+        try:
+            self.pynvml.nvmlInit()
+            return True
+        except Exception as recovery_error:
+            logger.warning(f'Could not recover NVIDIA NVML monitoring yet. {recovery_error}')
+            return False
 
     def _get_amdsmi_handles(self, log_failure=True):
         if not self.amdsmiLoaded or self.amdsmi is None:

@@ -696,10 +696,14 @@ ComfyUI, ROCm, GPU monitoring, CrysTool, Linux, Fedora
 
 ## Hardware tested
 - AMD Ryzen AI Max (Strix Halo)
+- INTEN 10900k, INTEL 10700
 - RDNA3.5 GPU (gfx1151)
-- ROCm 7.2
+- CUDA (RTX3090, RTX4050)
+- PyTorch 2.11.0+rocm7.14
+- PyTorch 2.12.0+rocm7.14
 - PyTorch 2.11.0+rocm7.2
 - Python 3.12.12
+- Windows 11
 - Fedora 44
 
 ## Related
