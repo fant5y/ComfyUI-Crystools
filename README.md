@@ -1,3 +1,7 @@
+# This is a Fork
+
+This is a fork of the original [crystian/ComfyUI-Crystools](https://github.com/crystian/ComfyUI-Crystools) by [Willie169](https://github.com/Willie169).
+
 # comfyui-crystools [![Donate](https://img.shields.io/badge/Donate-PayPal-blue.svg)](https://paypal.me/crystian77) <a src="https://colab.research.google.com/assets/colab-badge.svg" href="https://colab.research.google.com/drive/1xiTiPmZkcIqNOsLQPO1UNCdJZqgK3U5k?usp=sharing"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open in Colab"></a>
 
 **_🪛 A powerful set of tools for your belt when you work with ComfyUI 🪛_**
@@ -514,7 +518,17 @@ You have predefined switches (string, latent, image, conditioning) but you can u
 
 ## Changelog
 
+Format: version (DD/MM/YYYY)
+
 ### Crystools
+
+### 1.28.0 (04/09/2026)
+
+- Forked by [Willie169](https://github.com/Willie169) to current repo.
+- Merged [Fixed annoying errors due to my own ZLUDA PR.](https://github.com/crystian/ComfyUI-Crystools/pull/234) by [sfinktah](https://github.com/sfinktah).
+- Merged [feat: add AMD Linux GPU monitoring support (pyamdgpuinfo/sysfs fallback)](https://github.com/crystian/ComfyUI-Crystools/pull/278) by [ProOrNoob](https://github.com/ProOrNoob).
+- Merged [Use nvidia-ml-py instead of pynvml](https://github.com/crystian/ComfyUI-Crystools/pull/282) by [EuropaYou](https://github.com/EuropaYou).
+- Merged layout part of [Fix: ROCm/RDNA3.5 GPU monitoring widgets (usage, VRAM, temperature) + responsive layout](https://github.com/crystian/ComfyUI-Crystools/pull/283) by [MISEMUNJIOZONE](https://github.com/MISEMUNJIOZONE).
 
 ### 1.27.0 (17/08/2025)
 - revert the lower case on name, cannot change on registry ¯\_(ツ)_/¯
@@ -628,18 +642,6 @@ You have predefined switches (string, latent, image, conditioning) but you can u
     ```
 3. Start up ComfyUI.
 
-#### For AMD users
-If you are an AMD user with Linux, you can try the AMD branch:
-
-**ATTENTION:** Don't install with the manager, you need to install manually:
-
-  ```
-  cd ComfyUI/custom_nodes
-  git clone -b AMD https://github.com/crystian/comfyui-crystools.git
-  cd comfyui-crystools
-  pip install -r requirements.txt
-  ```
-
 ### Install from manager
 
 Search for `crystools` in the [manager](https://github.com/ltdrdata/ComfyUI-Manager.git) and install it.
@@ -669,4 +671,4 @@ If for some reason you need to see the logs, you can define the environment vari
 
 ---
 
-Made with ❤️ by Crystian.
+Made with ❤️ by [Crystian](https://github.com/crystian).
