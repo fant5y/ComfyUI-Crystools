@@ -522,7 +522,7 @@ Format: version (DD/MM/YYYY)
 
 ### Crystools
 
-### 1.28.0 (04/09/2026)
+### 1.28.0 (05/09/2026)
 
 - Forked by [Willie169](https://github.com/Willie169) to current repo.
 - Merged [Fixed annoying errors due to my own ZLUDA PR.](https://github.com/crystian/ComfyUI-Crystools/pull/234) by [sfinktah](https://github.com/sfinktah).
