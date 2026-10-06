@@ -9,6 +9,7 @@ Targets: ComfyUI **0.38.0** and ComfyUI_frontend **1.53.10**.
 - Each node declares a native `io.Schema`, executes through a class method and
   returns `io.NodeOutput`. Existing node IDs, display names, input order,
   defaults, output names, categories and list-output nesting are retained.
+  The pipe nodes now declare additional value slots as described below.
 - Replace the wildcard string-equality workaround with `io.AnyType`.
   Preserve JSON, METADATA_RAW, ListString and CPipeAny socket types using
   `io.Custom`.
@@ -56,6 +57,24 @@ Targets: ComfyUI **0.38.0** and ComfyUI_frontend **1.53.10**.
   execution completion, including cached runs.
 - Update the committed JavaScript and declarations together with TypeScript.
 
+## Expandable pipes
+
+- Keep the first six value positions and the CPipeAny list payload compatible
+  with existing workflows. The pipe schema now supports 100 values; ComfyUI
+  requires each output index to be declared for server-side prompt validation.
+- Show six slots initially and add a spare input when the last slot is connected.
+  Extraction outputs follow the supplied range. Remove only trailing unused
+  slots, retaining output indices that still have downstream connections.
+- Display each connected source output's label and socket colors. Input names
+  remain `any_1`, `any_2`, etc.; labels never change the server's input keys.
+  Value inputs stay wildcard sockets so they can be replaced with another type.
+- Propagate labels/types/colors through pipe chains and standard reroutes.
+  An edit overrides its value position; disconnecting it restores the inherited
+  label and value. Output link types track the resolved source type.
+- Refresh after creation, workflow loading and connection changes, with a cycle
+  guard. Existing callbacks are preserved. Additional output positions return
+  None when absent, without changing the compact pipe payload.
+
 ## Validation
 
 - `npm ci` and `npm run validate`: TypeScript compilation and ESLint passed.
@@ -63,6 +82,9 @@ Targets: ComfyUI **0.38.0** and ComfyUI_frontend **1.53.10**.
   validator. Contract comparisons against the repository's original classes
   confirmed input order/types/defaults, output types/names, categories,
   list flags and output-node flags.
+- Pipe checks covered 100-value execution, sparse slots, non-mutating edits,
+  label/color propagation, automatic growth, disconnects, connected-index
+  retention and metadata cycles.
 - Execution checks covered primitives, lazy branches, lists, pipes, debugger
   output, JSON extraction/file refresh, metadata comparison, preview isolation
   across class clones, image validation and WebP EXIF parsing.
