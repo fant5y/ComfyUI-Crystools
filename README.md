@@ -1,7 +1,3 @@
-# This is a Fork
-
-This is a fork of the original [crystian/ComfyUI-Crystools](https://github.com/crystian/ComfyUI-Crystools) by [Willie169](https://github.com/Willie169).
-
 # comfyui-crystools [![Donate](https://img.shields.io/badge/Donate-PayPal-blue.svg)](https://paypal.me/crystian77) <a src="https://colab.research.google.com/assets/colab-badge.svg" href="https://colab.research.google.com/drive/1xiTiPmZkcIqNOsLQPO1UNCdJZqgK3U5k?usp=sharing"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open in Colab"></a>
 
 **_🪛 A powerful set of tools for your belt when you work with ComfyUI 🪛_**
@@ -9,9 +5,57 @@ This is a fork of the original [crystian/ComfyUI-Crystools](https://github.com/c
 With this suit, you can see the resources monitor, progress bar & time elapsed, metadata and compare between two images, compare between two JSONs, show any value to console/display, pipes, and more!
 This provides better nodes to load/save images, previews, etc, and see "hidden" data without loading a new workflow.
 
+## Credits and this fork
+
+Crystools was created by [Crystian](https://github.com/crystian). The original
+[ComfyUI-Crystools](https://github.com/crystian/ComfyUI-Crystools) provides the node
+collection, monitoring, image metadata tools and pipe functionality this fork
+builds on. Please support the original author through the donation link above.
+
+This repository is maintained by [fant5y](https://github.com/fant5y), based on
+[Willie169's fork](https://github.com/Willie169/ComfyUI-Crystools). Credit for the
+original work and earlier community contributions remains with their authors;
+the original documentation, examples, license and changelog are retained below.
+
+## Compatibility and fork updates
+
+This fork targets **ComfyUI 0.38.0** and **ComfyUI_frontend 1.53.10**. Its 30 Python
+nodes use ComfyUI's native V3 custom-node API. The original node identifiers and
+workflow inputs remain supported, with the pipe extensions described below.
+Older ComfyUI versions without the required V3 API are not supported by this fork.
+
+Changes in this fork:
+
+- Migrate the original nodes to native V3 registration, schemas and execution;
+  preserve image metadata, previews, primitive values, lists and boolean switches.
+- Update frontend imports and settings registration. Keep resource monitors and
+  progress alongside the top toolbar's extension buttons, including after toolbar
+  remounts, and fix the startup `Unknown message type crystools.monitor` warning.
+- Expand pipes automatically up to **100 values**, displaying connected source
+  labels, socket types and colors through pipe chains and native subgraphs.
+- Label pipe outputs with their enclosing group's name, and restore the previous
+  label when the node leaves the group.
+- Add **Switch Any (Auto)**: choose the first usable input without a boolean or
+  numbered selector, with expanding inputs and automatic labels/colors.
+- Route named pipe fields through automatic switches. The first-connected pipe
+  supplies a stable template for empty sibling slots; selected values are matched
+  by label and type even when another pipe connects them in a different order.
+- Skip empty whole pipes during automatic selection. Missing extracted fields
+  silently stop their dependent execution path instead of passing `None` to it.
+- Isolate preview state per node, repair WebP metadata handling and make JSON-file
+  changes visible without changing the file path.
+
+See [Pipe](#pipe) and [Switch Any (Auto)](#node-switch-any-auto) for usage, and
+[MIGRATION.md](./MIGRATION.md) for implementation details and validation.
+Screenshots and sample workflows below also document the original Crystools;
+the current toolbar and expanded sockets may look different.
+
 ![Show metadata](./docs/jake.gif)
 
 # Table of contents
+
+- [Credits and this fork](#credits-and-this-fork)
+- [Compatibility and fork updates](#compatibility-and-fork-updates)
 - [General](#general)
 - [Metadata](#metadata)
 - [Debugger](#debugger)
@@ -45,12 +89,12 @@ You can configure the refresh rate which resources to show:
 
 > **Notes:**
 > - The GPU data is only available when you use CUDA (only NVIDIA cards, sorry AMD users).
-> - This extension needs ComfyUI 1915 (or higher).
+> - This fork targets ComfyUI 0.38.0 and ComfyUI_frontend 1.53.10.
 > - The cost of the monitor is low (0.1 to 0.5% of utilization), you can disable it from settings (`Refres rate` to `0`).
 > - Data comes from these libraries:
 >   - [psutil](https://pypi.org/project/psutil/)
 >   - [torch](https://pytorch.org/)
->   - [pynvml](https://pypi.org/project/pynvml/) (official NVIDIA library)
+>   - [nvidia-ml-py](https://pypi.org/project/nvidia-ml-py/) (official NVIDIA bindings)
 
 
 ### Progress bar
@@ -329,6 +373,36 @@ This powerful set of nodes is used to better organize your pipes.
 The "Pipe to/edit any" node is used to encapsulate multiple links into a single one. It includes support for editing and easily adding the modified content back to the same pipe number.
 
 The "Pipe from any" node is used to extract the content of a pipe.  
+
+### Expanded pipes in this fork
+
+Pipes start with six value slots and add a spare input as needed, up to 100 values.
+Connected slots show the source output's label and color. Labels propagate across
+reroutes, chained pipes and native subgraph boundaries. An edit replaces its value
+at that position; disconnecting it restores the inherited value and label.
+
+The pipe output uses the smallest enclosing canvas group's title. Outside groups,
+it retains its previous output label.
+
+When several pipes feed **Switch Any (Auto)**, the first-connected pipe supplies
+the template, regardless of its muted/bypassed state. Empty input slots on sibling
+pipes inherit its labels and colors. Connected slots keep their actual source
+identity. The template's order stays fixed when another branch is activated;
+fields unique to other branches are appended to the common layout.
+
+For example, MODEL may occupy slot 1 on one pipe and slot 3 on another: the switch
+matches its source label and type and routes the selected MODEL to the same
+extraction output. Repeated identical labels/types are matched in occurrence
+order. Give semantically different values distinct source output labels when
+both their label and type would otherwise be identical.
+
+An empty whole pipe can be skipped by the automatic switch. Extracting an absent
+or empty field produces a silent execution blocker: its dependent nodes do not
+run, even if the receiving socket is optional. Other available fields can still
+be used. Ordinary pipe editing remains positional; direct API pipes without
+workflow field metadata also retain positional behavior.
+
+The screenshots below show the original six-slot pipes.
  
 Typical example:
 
@@ -351,13 +425,13 @@ Editing pipes:
 >
 > - Input:
 >   - CPipeAny: This is the type of this pipe you can use to edit (see the sample)
->   - any_*: 6 possible inputs to use
+>   - any_*: Automatically expanding value inputs, up to 100
 > - Output:
 >   - CPipeAny: You can continue the pipe with this output; you can use it to bifurcate the pipe (see the sample)
 ></details>
 
 >**Important:**
-> - Please note that it supports "any," meaning it does not validate (not yet!) the correspondence of input nodes with the output ones. When creating the link, it is recommended to link consciously number by number.
+> - Direct pipe edits use positions. Automatic switches can align named pipe fields as described above; this does not convert values or make different data types interchangeable.
 > - "RecursionError" It's crucial to note that the flow of links **must be in the same direction**, and they cannot be mixed with other flows that use the result of this one. Otherwise, this may lead to recursion and block the server (you need to restart it!)
 
 
@@ -489,12 +563,45 @@ You can concatenate any value (it will try to convert it to a string and show th
 ## Switch
 A set of nodes to switch between flows.  
 
-All switches are boolean; you can switch between flows by simply changing the value of the switch.  
+The original boolean switches remain available; use them to select a flow explicitly.
 You have predefined switches (string, latent, image, conditioning) but you can use "Switch any" for any value/type.
 
 ![Switches](./docs/switches.png)
 
 **Sample:** [switch.json](./samples/switch.json)
+
+### Node: Switch Any (Auto)
+
+**Switch Any (Auto)** selects the first usable connected input from top to bottom,
+without a boolean or numbered selector. It starts with two inputs and adds a spare
+as connections are made, up to 100. It accepts any value type, including pipes.
+
+- Skip `None`, whitespace-only strings, empty containers/bytes, tensors with no
+  elements, and Crystools pipes containing no usable values.
+- Keep `False`, `0` and black images as valid values.
+- Skip sources that were muted or bypassed in the submitted workflow, including
+  across native subgraph boundaries.
+- If nothing is available, silently stop the downstream path.
+- Show the first non-muted/non-bypassed input's label and color on the output,
+  updating when branch modes change. Use a specific socket type when connected
+  branches agree; otherwise keep a wildcard output. The label reflects graph
+  activation; runtime empty values are discovered when the workflow executes.
+
+For model groups/subgraphs, connect each configured group's pipe to this switch,
+then connect its output to **Pipe from any**. Connect the intended template pipe
+first, and activate the desired group while muting/bypassing the others. The saved
+template survives workflow reloads and activation changes; disconnecting it
+promotes the next remaining connection. Older workflows without saved connection
+order initialize the template from input slot order.
+
+Connected active branches are evaluated before selection. This node does not
+lazily execute one candidate at a time, swallow upstream errors, or override
+ComfyUI's propagation of native execution blockers. In particular, a blocked
+extracted field also stops a switch receiving it; use whole-pipe switching when
+choosing between model branches.
+
+The node identifier is `CSWITCH_ANY_AUTO`. Workflows made with the early
+`First available any` prototype need that node replaced with **Switch Any (Auto)**.
 
 <br />
 
@@ -521,6 +628,15 @@ You have predefined switches (string, latent, image, conditioning) but you can u
 Format: version (DD/MM/YYYY)
 
 ### Crystools
+
+### This fork: native V3 migration and workflow routing
+
+- Update for ComfyUI 0.38.0 / ComfyUI_frontend 1.53.10; preserve the original node collection.
+- Restore toolbar monitoring/progress and fix monitor startup events.
+- Add expandable pipes, group/source labels, socket colors and native subgraph traversal.
+- Add Switch Any (Auto), stable sibling templates, named field alignment and active output labels.
+- Handle empty pipes and absent extracted fields without passing unusable values downstream.
+- Preserve attribution and original release history. Details: [MIGRATION.md](./MIGRATION.md).
 
 ### 1.28.0 (05/09/2026)
 
@@ -632,19 +748,22 @@ Format: version (DD/MM/YYYY)
 ## Installation
 
 ### Install from GitHub
-1. Install [ComfyUi](https://github.com/comfyanonymous/ComfyUI).
+1. Install [ComfyUI](https://github.com/Comfy-Org/ComfyUI) with the compatible versions listed above.
 2. Clone this repo into `custom_nodes`:
     ```
     cd ComfyUI/custom_nodes
-    git clone https://github.com/crystian/comfyui-crystools.git
-    cd comfyui-crystools
+    git clone https://github.com/fant5y/ComfyUI-Crystools.git
+    cd ComfyUI-Crystools
     pip install -r requirements.txt
     ```
-3. Start up ComfyUI.
+3. Start ComfyUI and refresh the browser. After updates, restart ComfyUI and use Ctrl+F5.
+
+Use the Python environment that runs your ComfyUI installation when installing
+dependencies. Install one copy of Crystools at a time to avoid duplicate node IDs.
 
 ### Install from manager
 
-Search for `crystools` in the [manager](https://github.com/ltdrdata/ComfyUI-Manager.git) and install it.
+The original Crystools is available through [ComfyUI-Manager](https://github.com/ltdrdata/ComfyUI-Manager.git). To get the changes documented here, install this fork from its GitHub URL using the instructions above.
 
 ### Using on Google Colab
 
@@ -662,7 +781,7 @@ This is the URL to access ComfyUI: https://identifying-complications-fw-some.try
 
 ## Use
 
-You can use it as any other node, just using the menu in the category `crystools` or double clicking on the canvas (I recommended using the "oo" to fast filter), all nodes were post fixing with `[Crystools]`.
+You can use it as any other node, just using the menu in the category `crystools` or double clicking on the canvas (I recommended using the "oo" to fast filter), the original node identifiers end with `[Crystools]`. Search for `Switch Any (Auto)` to find the new automatic switch.
 
 ![Menu](./docs/menu.png)
 ![shortcut](./docs/shortcut.png)

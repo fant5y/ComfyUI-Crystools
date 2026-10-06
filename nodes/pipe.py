@@ -1,74 +1,73 @@
-from ..core import CATEGORY, any
+from comfy_api.latest import io
+from comfy_execution.graph_utils import ExecutionBlocker
+from ..core import CATEGORY
+from ..core.pipe import PipeValues, empty_value, pipe_layout
 from ._names import CLASSES
 
 
-class CPipeToAny:
-    def __init__(self):
-        pass
+PIPE_CAPACITY = 100
+
+
+class CPipeToAny(io.ComfyNode):
+    @classmethod
+    def fingerprint_inputs(cls, **values: object) -> float:
+        # Workflow labels are hidden metadata, outside ComfyUI's input cache key.
+        return float('NaN')
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {},
-            "optional": {
-                CLASSES.CPIPE_ANY_TYPE.value: (CLASSES.CPIPE_ANY_TYPE.value,),
-                "any_1": (any,),
-                "any_2": (any,),
-                "any_3": (any,),
-                "any_4": (any,),
-                "any_5": (any,),
-                "any_6": (any,),
-            }
-        }
-
-    CATEGORY = CATEGORY.MAIN.value + CATEGORY.PIPE.value
-    RETURN_TYPES = (CLASSES.CPIPE_ANY_TYPE.value,)
-
-    FUNCTION = "execute"
-
-    def execute(self, CPipeAny=None, any_1=None, any_2=None, any_3=None, any_4=None, any_5=None, any_6=None):
-        any_1_original = None
-        any_2_original = None
-        any_3_original = None
-        any_4_original = None
-        any_5_original = None
-        any_6_original = None
-
-        if CPipeAny != None:
-            any_1_original, any_2_original, any_3_original, any_4_original, any_5_original, any_6_original = CPipeAny
-
-        CAnyPipeMod = []
-
-        CAnyPipeMod.append(any_1 if any_1 is not None else any_1_original)
-        CAnyPipeMod.append(any_2 if any_2 is not None else any_2_original)
-        CAnyPipeMod.append(any_3 if any_3 is not None else any_3_original)
-        CAnyPipeMod.append(any_4 if any_4 is not None else any_4_original)
-        CAnyPipeMod.append(any_5 if any_5 is not None else any_5_original)
-        CAnyPipeMod.append(any_6 if any_6 is not None else any_6_original)
-
-        return (CAnyPipeMod,)
-
-
-class CPipeFromAny:
-    def __init__(self):
-        pass
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id=CLASSES.CPIPE_TO_ANY_NAME.value,
+            display_name=CLASSES.CPIPE_TO_ANY_DESC.value,
+            category=CATEGORY.MAIN.value + CATEGORY.PIPE.value,
+            inputs=[
+                io.Custom(CLASSES.CPIPE_ANY_TYPE.value).Input(CLASSES.CPIPE_ANY_TYPE.value, optional=True),
+                *[io.AnyType.Input(f'any_{index}', optional=True) for index in range(1, PIPE_CAPACITY + 1)],
+            ],
+            outputs=[io.Custom(CLASSES.CPIPE_ANY_TYPE.value).Output()],
+            hidden=[io.Hidden.unique_id, io.Hidden.extra_pnginfo],
+        )
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                CLASSES.CPIPE_ANY_TYPE.value: (CLASSES.CPIPE_ANY_TYPE.value,),
-            },
-            "optional": {
-            }
-        }
+    def execute(cls, CPipeAny: list[object] | None = None, **values: object) -> io.NodeOutput:
+        pipe = list(CPipeAny) if CPipeAny is not None else []
+        supplied_slots = [int(name[4:]) for name in values if name.startswith('any_')]
+        length = max(6, len(pipe), max(supplied_slots, default=0))
+        if length > PIPE_CAPACITY:
+            raise ValueError(f'Crystools pipes support up to {PIPE_CAPACITY} values')
+        pipe.extend([None] * (length - len(pipe)))
+        inherited = getattr(CPipeAny, 'layout', [])
+        layout = list(inherited) + [None] * max(0, length - len(inherited))
+        descriptions = pipe_layout(cls.hidden)
+        for index in range(length):
+            value = values.get(f'any_{index + 1}')
+            if value is not None:
+                pipe[index] = value
+                layout[index] = descriptions[index] if index < len(descriptions) else None
+        return io.NodeOutput(PipeValues(pipe, layout))
 
-    CATEGORY = CATEGORY.MAIN.value + CATEGORY.PIPE.value
-    RETURN_TYPES = (CLASSES.CPIPE_ANY_TYPE.value, any, any, any, any, any, any,)
-    RETURN_NAMES = (CLASSES.CPIPE_ANY_TYPE.value, "any_1", "any_2", "any_3", "any_4", "any_5", "any_6",)
 
-    FUNCTION = "execute"
+class CPipeFromAny(io.ComfyNode):
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id=CLASSES.CPIPE_FROM_ANY_NAME.value,
+            display_name=CLASSES.CPIPE_FROM_ANY_DESC.value,
+            category=CATEGORY.MAIN.value + CATEGORY.PIPE.value,
+            inputs=[io.Custom(CLASSES.CPIPE_ANY_TYPE.value).Input(CLASSES.CPIPE_ANY_TYPE.value)],
+            # All output indices must exist in the server schema for prompt validation.
+            # The frontend exposes only the active range and retains connected slots.
+            outputs=[
+                io.Custom(CLASSES.CPIPE_ANY_TYPE.value).Output(display_name=CLASSES.CPIPE_ANY_TYPE.value),
+                *[io.AnyType.Output(display_name=f'any_{index}') for index in range(1, PIPE_CAPACITY + 1)],
+            ],
+        )
 
-    def execute(self, CPipeAny=None, ):
-        any_1, any_2, any_3, any_4, any_5, any_6 = CPipeAny
-        return CPipeAny, any_1, any_2, any_3, any_4, any_5, any_6
+    @classmethod
+    def execute(cls, CPipeAny: list[object] | None) -> io.NodeOutput:
+        pipe = CPipeAny if CPipeAny is not None else PipeValues([], [])
+        if len(pipe) > PIPE_CAPACITY:
+            raise ValueError(f'Crystools pipes support up to {PIPE_CAPACITY} values')
+        values = list(pipe) + [None] * (PIPE_CAPACITY - len(pipe))
+        outputs = [ExecutionBlocker(None) if empty_value(value) else value for value in values]
+        return io.NodeOutput(pipe, *outputs)

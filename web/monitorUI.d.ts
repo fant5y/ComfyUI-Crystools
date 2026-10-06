@@ -14,6 +14,7 @@ export declare class MonitorUI extends ProgressBarUIBase {
     private monitorWidth;
     private monitorHeight;
     private readonly maxMonitorFontSize;
+    private resizeObserver;
     constructor(rootElement: HTMLElement, monitorCPUElement: TMonitorSettings, monitorRAMElement: TMonitorSettings, monitorHDDElement: TMonitorSettings, monitorGPUSettings: TMonitorSettings[], monitorVRAMSettings: TMonitorSettings[], monitorTemperatureSettings: TMonitorSettings[], currentRate: number);
     createDOM: () => void;
     createDOMGPUMonitor: (monitorSettings?: TMonitorSettings) => void;

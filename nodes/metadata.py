@@ -1,27 +1,32 @@
+from comfy_api.latest import io
+from ._names import CLASSES
 import json
 import re
-from ..core import CATEGORY, CONFIG, METADATA_RAW, TEXTS, findJsonsDiff, logger
+from ..core import CATEGORY, CONFIG, TEXTS, findJsonsDiff, logger
 
 
-class CMetadataExtractor:
+class CMetadataExtractor(io.ComfyNode):
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "metadata_raw": METADATA_RAW,
-            },
-            "optional": {
-            }
-        }
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id=CLASSES.CMETADATA_EXTRACTOR_NAME.value,
+            display_name=CLASSES.CMETADATA_EXTRACTOR_DESC.value,
+            category=CATEGORY.MAIN.value + CATEGORY.METADATA.value,
+            inputs=[
+                io.Custom('METADATA_RAW').Input('metadata_raw'),
+            ],
+            outputs=[
+                io.Custom('JSON').Output(display_name='prompt'),
+                io.Custom('JSON').Output(display_name='workflow'),
+                io.Custom('JSON').Output(display_name='file info'),
+                io.Custom('JSON').Output(display_name='raw to JSON'),
+                io.String.Output(display_name='raw to property'),
+                io.String.Output(display_name='raw to csv'),
+            ],
+        )
 
-    CATEGORY = CATEGORY.MAIN.value + CATEGORY.METADATA.value
-    RETURN_TYPES = ("JSON", "JSON", "JSON", "JSON", "STRING", "STRING")
-    RETURN_NAMES = ("prompt", "workflow", "file info", "raw to JSON", "raw to property", "raw to csv")
-    # OUTPUT_NODE = True
-
-    FUNCTION = "execute"
-
-    def execute(self, metadata_raw=None):
+    @classmethod
+    def execute(cls, metadata_raw: object = None) -> io.NodeOutput:
         prompt = {}
         workflow = {}
         fileinfo = {}
@@ -79,34 +84,34 @@ class CMetadataExtractor:
         else:
             logger.warn(TEXTS.INVALID_METADATA_MSG.value)
 
-        return (json.dumps(prompt, indent=CONFIG["indent"]),
-                json.dumps(workflow, indent=CONFIG["indent"]),
-                json.dumps(fileinfo, indent=CONFIG["indent"]),
-                json.dumps(metadata_raw, indent=CONFIG["indent"]),
-                text, csv)
+        return io.NodeOutput(json.dumps(prompt, indent=CONFIG['indent']), json.dumps(workflow, indent=CONFIG['indent']), json.dumps(fileinfo, indent=CONFIG['indent']), json.dumps(metadata_raw, indent=CONFIG['indent']), text, csv)
 
 
-class CMetadataCompare:
+class CMetadataCompare(io.ComfyNode):
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "metadata_raw_old": METADATA_RAW,
-                "metadata_raw_new": METADATA_RAW,
-                "what": (["Prompt", "Workflow", "Fileinfo"],),
-            },
-            "optional": {
-            }
-        }
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id=CLASSES.CMETADATA_COMPARATOR_NAME.value,
+            display_name=CLASSES.CMETADATA_COMPARATOR_DESC.value,
+            category=CATEGORY.MAIN.value + CATEGORY.METADATA.value,
+            inputs=[
+                io.Custom('METADATA_RAW').Input('metadata_raw_old'),
+                io.Custom('METADATA_RAW').Input('metadata_raw_new'),
+                io.Combo.Input('what', options=['Prompt', 'Workflow', 'Fileinfo']),
+            ],
+            outputs=[
+                io.Custom('JSON').Output(display_name='diff'),
+            ],
+            is_output_node=True,
+        )
 
-    CATEGORY = CATEGORY.MAIN.value + CATEGORY.METADATA.value
-    RETURN_TYPES = ("JSON",)
-    RETURN_NAMES = ("diff",)
-    OUTPUT_NODE = True
-
-    FUNCTION = "execute"
-
-    def execute(self, what, metadata_raw_old=None, metadata_raw_new=None):
+    @classmethod
+    def execute(
+        cls,
+        what: str,
+        metadata_raw_old: object = None,
+        metadata_raw_new: object = None,
+    ) -> io.NodeOutput:
         prompt_old = {}
         workflow_old = {}
         fileinfo_old = {}
@@ -161,4 +166,4 @@ class CMetadataCompare:
             logger.warn(invalid_msg)
             diff = invalid_msg
 
-        return {"ui": {"text": [diff]}, "result": (diff,)}
+        return io.NodeOutput.from_dict({'ui': {'text': [diff]}, 'result': (diff,)})

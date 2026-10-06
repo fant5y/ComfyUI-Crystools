@@ -1,111 +1,105 @@
-from ..core import BOOLEAN, CATEGORY, STRING, INT, FLOAT, STRING_ML
+import sys
+
+from comfy_api.latest import io
+from ._names import CLASSES
+from ..core import CATEGORY
 
 
-class CBoolean:
-    def __init__(self):
-        pass
+class CBoolean(io.ComfyNode):
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id=CLASSES.CBOOLEAN_NAME.value,
+            display_name=CLASSES.CBOOLEAN_DESC.value,
+            category=CATEGORY.MAIN.value + CATEGORY.PRIMITIVE.value,
+            inputs=[
+                io.Boolean.Input('boolean', default=True),
+            ],
+            outputs=[
+                io.Boolean.Output(display_name='boolean'),
+            ],
+        )
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "boolean": BOOLEAN,
-            }
-        }
-
-    CATEGORY = CATEGORY.MAIN.value + CATEGORY.PRIMITIVE.value
-    RETURN_TYPES = ("BOOLEAN",)
-    RETURN_NAMES = ("boolean",)
-
-    FUNCTION = "execute"
-
-    def execute(self, boolean=True):
-        return (boolean,)
+    def execute(cls, boolean: bool = True) -> io.NodeOutput:
+        return io.NodeOutput(boolean)
 
 
-class CText:
-    def __init__(self):
-        pass
+class CText(io.ComfyNode):
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id=CLASSES.CTEXT_NAME.value,
+            display_name=CLASSES.CTEXT_DESC.value,
+            category=CATEGORY.MAIN.value + CATEGORY.PRIMITIVE.value,
+            inputs=[
+                io.String.Input('string', default=''),
+            ],
+            outputs=[
+                io.String.Output(display_name='string'),
+            ],
+        )
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "string": STRING,
-            }
-        }
-
-    CATEGORY = CATEGORY.MAIN.value + CATEGORY.PRIMITIVE.value
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("string",)
-
-    FUNCTION = "execute"
-
-    def execute(self, string=""):
-        return (string,)
+    def execute(cls, string: str = '') -> io.NodeOutput:
+        return io.NodeOutput(string)
 
 
-class CTextML:
-    def __init__(self):
-        pass
+class CTextML(io.ComfyNode):
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id=CLASSES.CTEXTML_NAME.value,
+            display_name=CLASSES.CTEXTML_DESC.value,
+            category=CATEGORY.MAIN.value + CATEGORY.PRIMITIVE.value,
+            inputs=[
+                io.String.Input('string', multiline=True, default=''),
+            ],
+            outputs=[
+                io.String.Output(display_name='string'),
+            ],
+        )
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "string": STRING_ML,
-            }
-        }
-
-    CATEGORY = CATEGORY.MAIN.value + CATEGORY.PRIMITIVE.value
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("string",)
-
-    FUNCTION = "execute"
-
-    def execute(self, string=""):
-        return (string,)
+    def execute(cls, string: str = '') -> io.NodeOutput:
+        return io.NodeOutput(string)
 
 
-class CInteger:
-    def __init__(self):
-        pass
+class CInteger(io.ComfyNode):
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id=CLASSES.CINTEGER_NAME.value,
+            display_name=CLASSES.CINTEGER_DESC.value,
+            category=CATEGORY.MAIN.value + CATEGORY.PRIMITIVE.value,
+            inputs=[
+                io.Int.Input('int', default=1, min=-sys.maxsize, max=sys.maxsize, step=1),
+            ],
+            outputs=[
+                io.Int.Output(display_name='int'),
+            ],
+        )
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "int": INT,
-            }
-        }
-
-    CATEGORY = CATEGORY.MAIN.value + CATEGORY.PRIMITIVE.value
-    RETURN_TYPES = ("INT",)
-    RETURN_NAMES = ("int",)
-
-    FUNCTION = "execute"
-
-    def execute(self, int=True):
-        return (int,)
+    def execute(cls, int: int = True) -> io.NodeOutput:
+        return io.NodeOutput(int)
 
 
-class CFloat:
-    def __init__(self):
-        pass
+class CFloat(io.ComfyNode):
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id=CLASSES.CFLOAT_NAME.value,
+            display_name=CLASSES.CFLOAT_DESC.value,
+            category=CATEGORY.MAIN.value + CATEGORY.PRIMITIVE.value,
+            inputs=[
+                io.Float.Input('float', default=1, min=-sys.float_info.max, max=sys.float_info.max, step=0.01),
+            ],
+            outputs=[
+                io.Float.Output(display_name='float'),
+            ],
+        )
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "float": FLOAT,
-            }
-        }
-
-    CATEGORY = CATEGORY.MAIN.value + CATEGORY.PRIMITIVE.value
-    RETURN_TYPES = ("FLOAT",)
-    RETURN_NAMES = ("float",)
-
-    FUNCTION = "execute"
-
-    def execute(self, float=True):
-        return (float,)
+    def execute(cls, float: float = True) -> io.NodeOutput:
+        return io.NodeOutput(float)

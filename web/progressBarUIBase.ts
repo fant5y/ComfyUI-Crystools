@@ -4,13 +4,6 @@ export enum EStatus {
   execution_error = 'Execution error',
 }
 
-export const ComfyKeyMenuDisplayOption = 'Comfy.UseNewMenu';
-export enum MenuDisplayOptions {
-  'Disabled' = 'Disabled',
-  'Top' = 'Top',
-  'Bottom' = 'Bottom',
-}
-
 export abstract class ProgressBarUIBase {
   protected htmlClassMonitor = 'crystools-monitors-container';
 

@@ -1,45 +1,42 @@
-from ..core import STRING, TEXTS, KEYS, CATEGORY, any, logger
+from comfy_api.latest import io
+from ..core import TEXTS, KEYS, CATEGORY, logger
 from ._names import CLASSES
 
 
-class CListAny:
-    def __init__(self):
-        pass
+class CListAny(io.ComfyNode):
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id=CLASSES.CLIST_ANY_NAME.value,
+            display_name=CLASSES.CLIST_ANY_DESC.value,
+            category=CATEGORY.MAIN.value + CATEGORY.LIST.value,
+            inputs=[
+                io.AnyType.Input('any_1', optional=True),
+                io.AnyType.Input('any_2', optional=True),
+                io.AnyType.Input('any_3', optional=True),
+                io.AnyType.Input('any_4', optional=True),
+                io.AnyType.Input('any_5', optional=True),
+                io.AnyType.Input('any_6', optional=True),
+                io.AnyType.Input('any_7', optional=True),
+                io.AnyType.Input('any_8', optional=True),
+            ],
+            outputs=[
+                io.AnyType.Output(display_name='any_list', is_output_list=True),
+            ],
+        )
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-            },
-            "optional": {
-                "any_1": (any,),
-                "any_2": (any,),
-                "any_3": (any,),
-                "any_4": (any,),
-                "any_5": (any,),
-                "any_6": (any,),
-                "any_7": (any,),
-                "any_8": (any,),
-            }
-        }
-
-    CATEGORY = CATEGORY.MAIN.value + CATEGORY.LIST.value
-    RETURN_TYPES = (any,),
-    RETURN_NAMES = ("any_list",)
-    OUTPUT_IS_LIST = (True,)
-
-    FUNCTION = "execute"
-
-    def execute(self,
-                any_1=None,
-                any_2=None,
-                any_3=None,
-                any_4=None,
-                any_5=None,
-                any_6=None,
-                any_7=None,
-                any_8=None):
-
+    def execute(
+        cls,
+        any_1: object = None,
+        any_2: object = None,
+        any_3: object = None,
+        any_4: object = None,
+        any_5: object = None,
+        any_6: object = None,
+        any_7: object = None,
+        any_8: object = None,
+    ) -> io.NodeOutput:
         list_any = []
 
         if any_1 is not None:
@@ -84,49 +81,46 @@ class CListAny:
                 logger.warn(e)
 
         # yes, double brackets are needed because of the OUTPUT_IS_LIST... ¯\_(ツ)_/¯
-        return [[list_any]]
+        return io.NodeOutput([list_any])
 
 
-class CListString:
-    def __init__(self):
-        pass
+class CListString(io.ComfyNode):
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id=CLASSES.CLIST_STRING_NAME.value,
+            display_name=CLASSES.CLIST_STRING_DESC.value,
+            category=CATEGORY.MAIN.value + CATEGORY.LIST.value,
+            inputs=[
+                io.String.Input('string_1', optional=True, default=''),
+                io.String.Input('string_2', optional=True, default=''),
+                io.String.Input('string_3', optional=True, default=''),
+                io.String.Input('string_4', optional=True, default=''),
+                io.String.Input('string_5', optional=True, default=''),
+                io.String.Input('string_6', optional=True, default=''),
+                io.String.Input('string_7', optional=True, default=''),
+                io.String.Input('string_8', optional=True, default=''),
+                io.String.Input('delimiter', optional=True, default=' '),
+            ],
+            outputs=[
+                io.String.Output(display_name=TEXTS.CONCAT.value),
+                io.Custom(CLASSES.CLIST_STRING_TYPE.value).Output(display_name=KEYS.LIST.value, is_output_list=True),
+            ],
+        )
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-            },
-            "optional": {
-                "string_1": STRING,
-                "string_2": STRING,
-                "string_3": STRING,
-                "string_4": STRING,
-                "string_5": STRING,
-                "string_6": STRING,
-                "string_7": STRING,
-                "string_8": STRING,
-                "delimiter": ("STRING", {"default": " "}),
-            }
-        }
-
-    CATEGORY = CATEGORY.MAIN.value + CATEGORY.LIST.value
-    RETURN_TYPES = ("STRING", CLASSES.CLIST_STRING_TYPE.value,)
-    RETURN_NAMES = (TEXTS.CONCAT.value, KEYS.LIST.value)
-    OUTPUT_IS_LIST = (False, True, )
-
-    FUNCTION = "execute"
-
-    def execute(self,
-                string_1=None,
-                string_2=None,
-                string_3=None,
-                string_4=None,
-                string_5=None,
-                string_6=None,
-                string_7=None,
-                string_8=None,
-                delimiter=""):
-
+    def execute(
+        cls,
+        string_1: str | None = None,
+        string_2: str | None = None,
+        string_3: str | None = None,
+        string_4: str | None = None,
+        string_5: str | None = None,
+        string_6: str | None = None,
+        string_7: str | None = None,
+        string_8: str | None = None,
+        delimiter: str = '',
+    ) -> io.NodeOutput:
         list_str = []
 
         if string_1 is not None and string_1 != "":
@@ -146,4 +140,4 @@ class CListString:
         if string_8 is not None and string_8 != "":
             list_str.append(string_8)
 
-        return delimiter.join(list_str), [list_str]
+        return io.NodeOutput(delimiter.join(list_str), [list_str])
