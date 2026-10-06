@@ -41,7 +41,8 @@ Changes in this fork:
   supplies a stable template for empty sibling slots; selected values are matched
   by label and type even when another pipe connects them in a different order.
 - Skip empty whole pipes during automatic selection. Missing extracted fields
-  silently stop their dependent execution path instead of passing `None` to it.
+  return `None` so availability checks can run; pipe edits preserve existing
+  values when an override or its required upstream pipe field is empty.
 - Isolate preview state per node, repair WebP metadata handling and make JSON-file
   changes visible without changing the file path.
 
@@ -402,11 +403,21 @@ the inherited value stays in place, or the slot remains empty if it had no value
 Other fields and later overrides continue through the pipe without extra switch
 nodes. Values never shift to fill an empty slot.
 
-For other receiving nodes, an absent or empty extraction still produces a silent
-execution blocker: its dependent nodes do not run, even if the receiving socket
-is optional. This pipe transport behavior does not change third-party nodes or
-ComfyUI's subgraph input requirements. Ordinary pipe editing remains positional;
-direct API pipes without workflow field metadata also retain positional behavior.
+Extracted empty fields return ordinary `None`, allowing nodes such as If None
+to inspect them. False, zero and nonempty tensors remain valid values.
+
+Pipe edits evaluate overrides lazily. If an override's upstream processing branch
+requires a typed field extracted from an empty pipe slot, the editor leaves that
+override unused and preserves the original value. For example, an absent reference
+image does not run scaling/encoding solely for a conditioning override; the
+original conditioning stays in the pipe. Wildcard checks and lazy inputs retain
+their own missing-value handling.
+
+This protection applies to branches requested by the pipe editor. Other output
+nodes can independently request those same branches, and ordinary consumers must
+handle `None` themselves. ComfyUI's subgraph input requirements remain unchanged.
+Ordinary pipe editing remains positional; direct API pipes without workflow field
+metadata also retain positional behavior.
 
 The screenshots below show the original six-slot pipes.
  
@@ -602,9 +613,9 @@ order initialize the template from input slot order.
 
 Connected active branches are evaluated before selection. This node does not
 lazily execute one candidate at a time, swallow upstream errors, or override
-ComfyUI's propagation of native execution blockers. In particular, a blocked
-extracted field also stops a switch receiving it; use whole-pipe switching when
-choosing between model branches.
+ComfyUI's propagation of native execution blockers from other nodes. Empty pipe
+extractions return `None` and can be skipped by this switch. Use whole-pipe
+switching when choosing between model branches.
 
 The node identifier is `CSWITCH_ANY_AUTO`. Workflows made with the early
 `First available any` prototype need that node replaced with **Switch Any (Auto)**.

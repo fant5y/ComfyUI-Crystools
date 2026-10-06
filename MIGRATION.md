@@ -128,18 +128,22 @@ Targets: ComfyUI **0.38.0** and ComfyUI_frontend **1.53.10**.
 - Treat a PipeValues payload containing only unavailable values as empty, so an
   automatic switch can fall through to another pipe. Keep whole empty pipe
   payloads as pipe values rather than upstream execution blockers, which would
-  prevent the switch from checking alternatives. Extraction emits silent native
-  execution blockers for missing/empty fields and accepts a None pipe safely.
-  False, zero and nonempty tensors remain valid. A blocked field stops its
-  dependent path, even when connected to an optional socket; native blockers
-  entering a switch still propagate under the engine's rules.
-- Preserve pipe editing across missing extracted fields. Pipe to/edit any uses
-  native raw links and graph expansion to resolve Pipe from any field connections
-  through its intact whole-pipe output. A dev-only execution helper skips empty
-  extracted overrides before they can block the editor, preserving inherited
-  values, slot positions and unrelated overrides. The original workflow node IDs
-  and sockets remain unchanged; users do not need to add helper nodes. Scalar
-  extraction into other consumers retains the existing blocker behavior.
+  prevent the switch from checking alternatives. Extraction returns ordinary
+  None for missing/empty fields and accepts a None pipe safely. False, zero and
+  nonempty tensors remain valid. None-aware consumers can execute their checks;
+  unrelated native execution blockers still propagate under the engine's rules.
+- Preserve pipe editing across missing direct and indirect overrides. Pipe to/edit
+  any uses native lazy raw links and graph expansion. Before requesting a computed
+  override, inspect its required typed dependencies on Pipe from any fields using
+  the native prompt and registered node input schemas. A dev-only guard reads
+  intact whole-pipe payloads and excludes overrides with missing required fields;
+  a dev-only editor applies available overrides, retaining inherited values and
+  slot positions. Wildcard checks, optional fields and lazy/raw inputs do not
+  directly require a field to exist. Do not traverse into other pipe editors.
+  No user-added helper nodes, core monkeypatches or execution-cache access are
+  required. Independently requested output branches and ordinary consumers keep
+  their own missing-value handling; this does not turn every None into a missing
+  connection or prevent unrelated upstream exceptions.
 - Store layouts in native serialized node properties, including layouts for each
   instance of a shared subgraph. Pipe creation and automatic selection use native
   fingerprint invalidation because hidden workflow metadata is excluded from the
@@ -151,7 +155,7 @@ Targets: ComfyUI **0.38.0** and ComfyUI_frontend **1.53.10**.
 ## Validation
 
 - `npm ci` and `npm run validate`: TypeScript compilation and ESLint passed.
-- All 30 user-facing native classes and the pipe execution helper passed the actual ComfyUI 0.38.0 V3 class/schema
+- All 30 user-facing native classes and both pipe execution helpers passed the actual ComfyUI 0.38.0 V3 class/schema
   validator. Contract comparisons against the repository's original classes
   confirmed input order/types/defaults, output types/names, categories,
   list flags and output-node flags.
@@ -171,7 +175,12 @@ Targets: ComfyUI **0.38.0** and ComfyUI_frontend **1.53.10**.
   order, configuration reloads, bypassed templates, connected-slot identity,
   nested groups, title changes, restoration outside groups and typed/mixed
   switch outputs. Native mapper checks verified empty-pipe fallback and that
-  consumers of absent extracted fields do not execute.
+  consumers can query absent extracted fields as None.
+- Optional-reference regression checks use the actual pinned V3 input resolver,
+  mapper and graph builder with a fixture dependency runner. Missing images do not
+  schedule scaling/encoding/reference nodes solely for pipe overrides; original
+  conditioning and other edits survive. Present images apply reference conditioning.
+  Wildcard None checks execute in both cases, including flattened subgraph IDs.
 - Active output-label checks covered input priority distinct from connection
   chronology, live mute/bypass toggles, downstream labels/colors, subgraph hosts,
   reroutes and unchanged template layouts when no branch is active.
