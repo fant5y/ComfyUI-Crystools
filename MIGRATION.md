@@ -97,6 +97,24 @@ Targets: ComfyUI **0.38.0** and ComfyUI_frontend **1.53.10**.
 - Connected active branches are evaluated before selection; this node does not
   lazily execute one candidate at a time. Normal ComfyUI execution blockers and
   upstream errors still propagate according to the engine's execution rules.
+- When all connected candidates are pipes, expose a CPipeAny output and propagate
+  a common field layout through the switch, downstream extraction/edit pipes,
+  reroutes and native subgraphs. Keep the first connected branch's slot order,
+  appending fields unique to other branches. Muting/bypassing a branch does not
+  change this layout or move connected downstream outputs.
+- Carry field identities on a list subclass, preserving the existing list payload
+  and positional pipe edits. At selection, reorder the actual values by exact
+  source label and type, so MODEL reaches the same output even if another branch
+  supplies it in a different slot. Missing fields become None; repeated identical
+  labels/types are matched by occurrence order. Give semantically distinct fields
+  distinct source labels when they otherwise share the same label and type.
+- Store layouts in native serialized node properties, including layouts for each
+  instance of a shared subgraph. Pipe creation and automatic selection use native
+  fingerprint invalidation because hidden workflow metadata is excluded from the
+  engine's input cache key. These lightweight nodes re-run to reflect label and
+  activation changes; upstream model nodes retain their normal caching behavior.
+  Unnamed direct API pipes retain positional behavior. No model-specific fields
+  or input selectors are introduced.
 
 ## Validation
 
@@ -114,6 +132,9 @@ Targets: ComfyUI **0.38.0** and ComfyUI_frontend **1.53.10**.
   retention and metadata cycles. Subgraph cases covered exported pipes, nested
   input/output forwarding, internal edits, workflow configuration events and
   distinct inputs on shared subgraph instances.
+- Named-switch checks covered reordered payloads, missing/extra fields, duplicate
+  names, unchanged source payloads, chained switches/edit pipes, mixed ordinary
+  values, per-instance subgraph layouts and actual V3 execution list streams.
 - Execution checks covered primitives, lazy branches, lists, pipes, debugger
   output, JSON extraction/file refresh, metadata comparison, preview isolation
   across class clones, image validation and WebP EXIF parsing.

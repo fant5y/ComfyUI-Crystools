@@ -3,6 +3,7 @@ from comfy_api.latest import io
 from comfy_execution.graph_utils import ExecutionBlocker
 
 from ..core import CATEGORY
+from ..core.pipe import align_pipe, pipe_layout
 from ._names import CLASSES
 
 
@@ -68,6 +69,11 @@ def _active_source(
 
 class CSwitchAnyAuto(io.ComfyNode):
     @classmethod
+    def fingerprint_inputs(cls, **values: object) -> float:
+        # The layout and mute/bypass state come from hidden workflow metadata.
+        return float('NaN')
+
+    @classmethod
     def define_schema(cls) -> io.Schema:
         return io.Schema(
             node_id=CLASSES.CSWITCH_ANY_AUTO_NAME.value,
@@ -111,5 +117,6 @@ class CSwitchAnyAuto(io.ComfyNode):
                 continue
             available = [value for value in values.get(name, []) if not _empty(value)]
             if available:
-                return io.NodeOutput(available)
+                layout = pipe_layout(cls.hidden)
+                return io.NodeOutput([align_pipe(value, layout) for value in available])
         return io.NodeOutput([ExecutionBlocker(None)])

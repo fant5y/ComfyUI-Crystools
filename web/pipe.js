@@ -51,20 +51,90 @@ const describeOutput = (source) => {
         return undefined;
     }
     const canvas = app.canvas;
+    const type = node.type === SWITCH_ANY_AUTO ?
+        (pipeSources(node, visited, context)?.length ? 'CPipeAny' : '*') : slot.type;
     return {
         label: slot.label || slot.name || String(slot.type),
-        type: slot.type,
-        color_on: slot.color_on || canvas.default_connection_color_byType[slot.type],
-        color_off: slot.color_off || canvas.default_connection_color_byTypeOff[slot.type],
+        type,
+        color_on: slot.color_on || canvas.default_connection_color_byType[type],
+        color_off: slot.color_off || canvas.default_connection_color_byTypeOff[type],
     };
+};
+const pipeSources = (node, visited, context) => {
+    if (!node.graph || visited.has(node)) {
+        return undefined;
+    }
+    const sources = [];
+    for (let index = 0; index < node.inputs.length; index++) {
+        if (node.inputs[index]?.link === null || node.inputs[index]?.link === undefined) {
+            continue;
+        }
+        const source = resolveSource(node.graph, node.getInputLink(index), context, new Set(visited).add(node));
+        if (!source || !(isPipe(source.node) && source.index === 0 ||
+            source.node.type === SWITCH_ANY_AUTO && pipeSources(source.node, source.visited, source.context)?.length)) {
+            return undefined;
+        }
+        sources.push(source);
+    }
+    return sources;
+};
+const fieldKeys = (values) => {
+    const counts = new Map();
+    return Array.from(values, value => {
+        if (!value) {
+            return undefined;
+        }
+        const identity = JSON.stringify([value.label, String(value.type)]);
+        const occurrence = counts.get(identity) || 0;
+        counts.set(identity, occurrence + 1);
+        return JSON.stringify([value.label, String(value.type), occurrence]);
+    });
+};
+const mergeLayouts = (layouts) => {
+    const values = Array.from(layouts[0] || []);
+    const known = new Set(fieldKeys(values).filter(key => key !== undefined));
+    for (const layout of layouts.slice(1)) {
+        fieldKeys(layout).forEach((key, index) => {
+            if (key !== undefined && !known.has(key)) {
+                known.add(key);
+                values.push(layout[index]);
+            }
+        });
+    }
+    return values;
+};
+const saveLayout = (node, values) => {
+    node.properties || (node.properties = {});
+    const serialize = (layout) => Array.from(layout, value => value ? { label: value.label, type: String(value.type) } : null);
+    node.properties['crystools_pipe_layout'] = serialize(values);
+    const instances = {};
+    const visit = (graph, context, path) => {
+        if (graph === node.graph) {
+            instances[[...path, node.id].join(':')] = serialize(describePipe(node, new Set(), context));
+        }
+        for (const host of graph._nodes) {
+            if (host.subgraph && !context.has(host.subgraph)) {
+                visit(host.subgraph, new Map(context).set(host.subgraph, host), [...path, host.id]);
+            }
+        }
+    };
+    if (node.graph && node.graph !== (node.graph.rootGraph || node.graph)) {
+        visit(node.graph.rootGraph, new Map(), []);
+    }
+    node.properties['crystools_pipe_layouts'] = instances;
 };
 const describePipe = (node, visited = new Set(), context = new Map()) => {
     if (!node.graph || visited.has(node)) {
         return [];
     }
+    if (node.type === SWITCH_ANY_AUTO) {
+        const sources = pipeSources(node, visited, context) || [];
+        return mergeLayouts(sources.map(source => describePipe(source.node, source.visited, source.context)));
+    }
     const path = new Set(visited).add(node);
     const parent = resolveSource(node.graph, node.getInputLink(0), context, path);
-    const values = parent && isPipe(parent.node) ? describePipe(parent.node, parent.visited, parent.context) : [];
+    const values = parent && (isPipe(parent.node) || parent.node.type === SWITCH_ANY_AUTO) ?
+        describePipe(parent.node, parent.visited, parent.context) : [];
     if (node.type === PIPE_TO) {
         node.inputs.slice(1).forEach((_slot, index) => {
             const source = resolveSource(node.graph, node.getInputLink(index + 1), context, path);
@@ -93,6 +163,9 @@ const connectedRange = (slots, input) => {
 const refreshNode = (node) => {
     const values = describePipe(node);
     const input = node.type === PIPE_TO;
+    if (input) {
+        saveLayout(node, values);
+    }
     const slots = input ? node.inputs : node.outputs;
     const connectedCount = connectedRange(slots, input);
     const count = Math.min(CAPACITY, Math.max(6, values.length + (input ? 1 : 0), connectedCount + (input ? 1 : 0)));
@@ -136,6 +209,17 @@ const refreshSwitch = (node) => {
             lastConnected = index;
         }
     });
+    saveLayout(node, describePipe(node));
+    const output = node.outputs[0];
+    if (output) {
+        output.type = pipeSources(node, new Set(), new Map())?.length ? 'CPipeAny' : '*';
+        output.links?.forEach(id => {
+            const link = node.graph?.links.get(id);
+            if (link) {
+                link.type = output.type;
+            }
+        });
+    }
     const count = Math.min(CAPACITY, Math.max(2, lastConnected + 2));
     const oldLength = node.inputs.length;
     while (node.inputs.length > count) {

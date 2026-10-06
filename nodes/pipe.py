@@ -1,5 +1,6 @@
 from comfy_api.latest import io
 from ..core import CATEGORY
+from ..core.pipe import PipeValues, pipe_layout
 from ._names import CLASSES
 
 
@@ -7,6 +8,11 @@ PIPE_CAPACITY = 100
 
 
 class CPipeToAny(io.ComfyNode):
+    @classmethod
+    def fingerprint_inputs(cls, **values: object) -> float:
+        # Workflow labels are hidden metadata, outside ComfyUI's input cache key.
+        return float('NaN')
+
     @classmethod
     def define_schema(cls) -> io.Schema:
         return io.Schema(
@@ -18,6 +24,7 @@ class CPipeToAny(io.ComfyNode):
                 *[io.AnyType.Input(f'any_{index}', optional=True) for index in range(1, PIPE_CAPACITY + 1)],
             ],
             outputs=[io.Custom(CLASSES.CPIPE_ANY_TYPE.value).Output()],
+            hidden=[io.Hidden.unique_id, io.Hidden.extra_pnginfo],
         )
 
     @classmethod
@@ -28,11 +35,15 @@ class CPipeToAny(io.ComfyNode):
         if length > PIPE_CAPACITY:
             raise ValueError(f'Crystools pipes support up to {PIPE_CAPACITY} values')
         pipe.extend([None] * (length - len(pipe)))
+        inherited = getattr(CPipeAny, 'layout', [])
+        layout = list(inherited) + [None] * max(0, length - len(inherited))
+        descriptions = pipe_layout(cls.hidden)
         for index in range(length):
             value = values.get(f'any_{index + 1}')
             if value is not None:
                 pipe[index] = value
-        return io.NodeOutput(pipe)
+                layout[index] = descriptions[index] if index < len(descriptions) else None
+        return io.NodeOutput(PipeValues(pipe, layout))
 
 
 class CPipeFromAny(io.ComfyNode):
