@@ -1,22 +1,9 @@
-import torch
 from comfy_api.latest import io
 from comfy_execution.graph_utils import ExecutionBlocker
 
 from ..core import CATEGORY
-from ..core.pipe import align_pipe, pipe_layout
+from ..core.pipe import align_pipe, empty_value, pipe_layout
 from ._names import CLASSES
-
-
-def _empty(value: object) -> bool:
-    if value is None or isinstance(value, ExecutionBlocker):
-        return True
-    if isinstance(value, str):
-        return not value.strip()
-    if isinstance(value, (bytes, bytearray, list, tuple, dict, set, frozenset)):
-        return len(value) == 0
-    if isinstance(value, torch.Tensor):
-        return value.numel() == 0
-    return False
 
 
 def _node(graph: dict, node_id: object) -> dict | None:
@@ -115,7 +102,7 @@ class CSwitchAnyAuto(io.ComfyNode):
             name = f'any_{index}'
             if not enabled.get(name, True):
                 continue
-            available = [value for value in values.get(name, []) if not _empty(value)]
+            available = [value for value in values.get(name, []) if not empty_value(value)]
             if available:
                 layout = pipe_layout(cls.hidden)
                 return io.NodeOutput([align_pipe(value, layout) for value in available])

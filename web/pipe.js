@@ -5,6 +5,79 @@ const CAPACITY = 100;
 const SWITCH_ANY_AUTO = 'CSWITCH_ANY_AUTO';
 const isPipe = (node) => node.type === PIPE_TO || node.type === PIPE_FROM;
 const pendingGraphs = new WeakSet();
+let templateLayouts = new WeakMap();
+const orderedInputs = (node) => {
+    node.properties || (node.properties = {});
+    const connected = node.inputs.map((slot, index) => ({ id: slot.link, index }))
+        .filter(slot => slot.id !== undefined && slot.id !== null);
+    const previous = node.properties['crystools_input_order'];
+    const order = Array.isArray(previous) ?
+        previous.filter(id => connected.some(slot => slot.id === id)) : [];
+    for (const slot of connected) {
+        if (!order.includes(slot.id)) {
+            order.push(slot.id);
+        }
+    }
+    node.properties['crystools_input_order'] = order;
+    return order.map(id => connected.find(slot => slot.id === id).index);
+};
+const contextKey = (node, context) => {
+    const path = [node.id];
+    let graph = node.graph;
+    const visited = new Set();
+    while (graph && graph !== (graph.rootGraph || graph) && !visited.has(graph)) {
+        visited.add(graph);
+        const host = context.get(graph) || uniqueHost(graph);
+        if (!host) {
+            return 'definition';
+        }
+        path.unshift(host.id);
+        graph = host.graph;
+    }
+    return path.join(':');
+};
+const groupLabel = (node) => {
+    if (!node.pos) {
+        return undefined;
+    }
+    const bounds = node.boundingRect || [node.pos[0], node.pos[1], node.size[0], node.size[1]];
+    const x = bounds[0] + bounds[2] / 2;
+    const y = bounds[1] + bounds[3] / 2;
+    const groups = (node.graph?.groups || []).filter(group => {
+        const rect = group.boundingRect;
+        return x >= rect[0] && x <= rect[0] + rect[2] && y >= rect[1] && y <= rect[1] + rect[3];
+    });
+    groups.sort((left, right) => left.boundingRect[2] * left.boundingRect[3] -
+        right.boundingRect[2] * right.boundingRect[3]);
+    return groups[0]?.title;
+};
+const refreshGroupLabel = (node) => {
+    const output = node.outputs[0];
+    if (!output) {
+        return false;
+    }
+    node.properties || (node.properties = {});
+    const previous = node.properties['crystools_group_label'];
+    const label = groupLabel(node);
+    if (label === previous && (!label || output.label === label)) {
+        return false;
+    }
+    if (!previous && label) {
+        node.properties['crystools_manual_pipe_label'] = output.label || output.name;
+    }
+    const manual = node.properties['crystools_manual_pipe_label'];
+    output.label = label || (typeof manual === 'string' ? manual : output.name);
+    node.properties['crystools_group_label'] = label;
+    return true;
+};
+const pipeOutputLabel = (node, slot) => {
+    const group = groupLabel(node);
+    const manual = node.properties?.['crystools_manual_pipe_label'];
+    if (!group && node.properties?.['crystools_group_label']) {
+        return typeof manual === 'string' ? manual : slot.name;
+    }
+    return group || slot.label || slot.name;
+};
 const graphsOf = (graph) => {
     const root = graph.rootGraph || graph;
     return [root, ...Array.from(root.subgraphs?.values() || [])];
@@ -46,29 +119,40 @@ const describeOutput = (source) => {
     if (node.type === PIPE_FROM && index > 0) {
         return describePipe(node, visited, context)[index - 1];
     }
+    if (node.type === SWITCH_ANY_AUTO) {
+        return describeSwitch(node, visited, context);
+    }
     const slot = node.outputs[index];
     if (!slot) {
         return undefined;
     }
     const canvas = app.canvas;
-    const type = node.type === SWITCH_ANY_AUTO ?
-        (pipeSources(node, visited, context)?.length ? 'CPipeAny' : '*') : slot.type;
+    const type = slot.type;
     return {
-        label: slot.label || slot.name || String(slot.type),
+        label: isPipe(node) && index === 0 ? pipeOutputLabel(node, slot) : slot.label || slot.name || String(slot.type),
         type,
         color_on: slot.color_on || canvas.default_connection_color_byType[type],
         color_off: slot.color_off || canvas.default_connection_color_byTypeOff[type],
     };
+};
+const describeSwitch = (node, visited, context) => {
+    if (!node.graph || visited.has(node)) {
+        return undefined;
+    }
+    const path = new Set(visited).add(node);
+    const values = orderedInputs(node).map(index => {
+        const source = resolveSource(node.graph, node.getInputLink(index), context, path);
+        return source ? describeOutput(source) : undefined;
+    });
+    const first = values[0];
+    return first ? { ...first, type: values.every(value => value?.type === first.type) ? first.type : '*' } : undefined;
 };
 const pipeSources = (node, visited, context) => {
     if (!node.graph || visited.has(node)) {
         return undefined;
     }
     const sources = [];
-    for (let index = 0; index < node.inputs.length; index++) {
-        if (node.inputs[index]?.link === null || node.inputs[index]?.link === undefined) {
-            continue;
-        }
+    for (const index of orderedInputs(node)) {
         const source = resolveSource(node.graph, node.getInputLink(index), context, new Set(visited).add(node));
         if (!source || !(isPipe(source.node) && source.index === 0 ||
             source.node.type === SWITCH_ANY_AUTO && pipeSources(source.node, source.visited, source.context)?.length)) {
@@ -161,8 +245,17 @@ const connectedRange = (slots, input) => {
     return count;
 };
 const refreshNode = (node) => {
+    refreshGroupLabel(node);
     const values = describePipe(node);
     const input = node.type === PIPE_TO;
+    if (input) {
+        const template = templateLayouts.get(node)?.get(contextKey(node, new Map())) || [];
+        template.forEach((value, index) => {
+            if (!values[index]) {
+                values[index] = value;
+            }
+        });
+    }
     if (input) {
         saveLayout(node, values);
     }
@@ -212,7 +305,7 @@ const refreshSwitch = (node) => {
     saveLayout(node, describePipe(node));
     const output = node.outputs[0];
     if (output) {
-        output.type = pipeSources(node, new Set(), new Map())?.length ? 'CPipeAny' : '*';
+        decorateSlot(output, describeSwitch(node, new Set(), new Map()), true);
         output.links?.forEach(id => {
             const link = node.graph?.links.get(id);
             if (link) {
@@ -237,6 +330,36 @@ const refreshSwitch = (node) => {
         node.setSize([Math.max(node.size[0], size[0]), oldLength !== count ? size[1] : node.size[1]]);
     }
 };
+const collectTemplates = (root) => {
+    templateLayouts = new WeakMap();
+    const visit = (graph, context) => {
+        for (const node of graph._nodes.filter(candidate => candidate.type === SWITCH_ANY_AUTO)) {
+            const sources = pipeSources(node, new Set(), context) || [];
+            const first = sources[0];
+            if (!first) {
+                continue;
+            }
+            const layout = describePipe(first.node, first.visited, first.context);
+            for (const source of sources.slice(1).filter(candidate => candidate.node.type === PIPE_TO)) {
+                let instances = templateLayouts.get(source.node);
+                if (!instances) {
+                    instances = new Map();
+                    templateLayouts.set(source.node, instances);
+                }
+                const key = contextKey(source.node, source.context);
+                if (!instances.has(key)) {
+                    instances.set(key, layout);
+                }
+            }
+        }
+        for (const host of graph._nodes.filter(candidate => candidate.subgraph)) {
+            if (!context.has(host.subgraph)) {
+                visit(host.subgraph, new Map(context).set(host.subgraph, host));
+            }
+        }
+    };
+    visit(root, new Map());
+};
 const refresh = (node) => {
     if (node.type === SWITCH_ANY_AUTO) {
         refreshSwitch(node);
@@ -253,6 +376,7 @@ const scheduleRefresh = (graph) => {
     pendingGraphs.add(root);
     queueMicrotask(() => {
         try {
+            collectTemplates(root);
             for (const owner of graphsOf(root)) {
                 observeGraph(owner);
                 owner._nodes.filter(node => isPipe(node) || node.type === SWITCH_ANY_AUTO).forEach(refresh);
@@ -269,6 +393,12 @@ const observedHosts = new WeakSet();
 const observeGraph = (graph) => {
     if (!observedGraphs.has(graph)) {
         observedGraphs.add(graph);
+        const changed = graph.onAfterChange;
+        graph.onAfterChange = function (...args) {
+            const result = changed?.apply(this, args);
+            scheduleRefresh(this);
+            return result;
+        };
         for (const event of [
             'configured', 'node:added', 'node:removed', 'subgraph-created', 'convert-to-subgraph',
             'node:slot-label:changed',
@@ -300,6 +430,14 @@ app.registerExtension({
             return;
         }
         const prototype = nodeType.prototype;
+        const draw = prototype.onDrawForeground;
+        prototype.onDrawForeground = function (...args) {
+            const result = draw?.apply(this, args);
+            if (isPipe(this) && refreshGroupLabel(this)) {
+                scheduleRefresh(this.graph);
+            }
+            return result;
+        };
         const created = prototype.onNodeCreated;
         prototype.onNodeCreated = function (...args) {
             const result = created?.apply(this, args);
@@ -311,6 +449,9 @@ app.registerExtension({
             prototype[hook] = function (...args) {
                 const graph = this.graph;
                 const result = original?.apply(this, args);
+                if (this.type === SWITCH_ANY_AUTO) {
+                    orderedInputs(this);
+                }
                 scheduleRefresh(this.graph || graph);
                 return result;
             };

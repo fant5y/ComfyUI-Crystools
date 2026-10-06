@@ -1,5 +1,8 @@
 from collections.abc import Iterable
 
+import torch
+from comfy_execution.graph_utils import ExecutionBlocker
+
 
 class PipeValues(list[object]):
     """Carry pipe field identities alongside the existing list payload."""
@@ -7,6 +10,20 @@ class PipeValues(list[object]):
     def __init__(self, values: Iterable[object], layout: list[dict | None]) -> None:
         super().__init__(values)
         self.layout = list(layout)
+
+
+def empty_value(value: object) -> bool:
+    if value is None or isinstance(value, ExecutionBlocker):
+        return True
+    if isinstance(value, PipeValues):
+        return all(empty_value(item) for item in value)
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (bytes, bytearray, list, tuple, dict, set, frozenset)):
+        return len(value) == 0
+    if isinstance(value, torch.Tensor):
+        return value.numel() == 0
+    return False
 
 
 def pipe_layout(hidden: object) -> list[dict | None]:

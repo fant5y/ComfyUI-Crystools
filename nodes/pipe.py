@@ -1,6 +1,7 @@
 from comfy_api.latest import io
+from comfy_execution.graph_utils import ExecutionBlocker
 from ..core import CATEGORY
-from ..core.pipe import PipeValues, pipe_layout
+from ..core.pipe import PipeValues, empty_value, pipe_layout
 from ._names import CLASSES
 
 
@@ -63,8 +64,10 @@ class CPipeFromAny(io.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, CPipeAny: list[object]) -> io.NodeOutput:
-        if len(CPipeAny) > PIPE_CAPACITY:
+    def execute(cls, CPipeAny: list[object] | None) -> io.NodeOutput:
+        pipe = CPipeAny if CPipeAny is not None else PipeValues([], [])
+        if len(pipe) > PIPE_CAPACITY:
             raise ValueError(f'Crystools pipes support up to {PIPE_CAPACITY} values')
-        values = list(CPipeAny) + [None] * (PIPE_CAPACITY - len(CPipeAny))
-        return io.NodeOutput(CPipeAny, *values)
+        values = list(pipe) + [None] * (PIPE_CAPACITY - len(pipe))
+        outputs = [ExecutionBlocker(None) if empty_value(value) else value for value in values]
+        return io.NodeOutput(pipe, *outputs)

@@ -78,7 +78,7 @@ Targets: ComfyUI **0.38.0** and ComfyUI_frontend **1.53.10**.
   label and value. Output link types track the resolved source type.
 - Refresh after creation, workflow loading and connection changes, with a cycle
   guard. Existing callbacks are preserved. Additional output positions return
-  None when absent, without changing the compact pipe payload.
+  silent execution blockers when absent, without changing the compact pipe payload.
 
 ## Switch Any (Auto)
 
@@ -108,6 +108,28 @@ Targets: ComfyUI **0.38.0** and ComfyUI_frontend **1.53.10**.
   supplies it in a different slot. Missing fields become None; repeated identical
   labels/types are matched by occurrence order. Give semantically distinct fields
   distinct source labels when they otherwise share the same label and type.
+- Preserve connection order in serialized switch properties. The first-connected
+  pipe supplies the template even when bypassed/muted; on older workflows without
+  saved order, initialize it from input slot order. Disconnection promotes the
+  next remaining connection. Empty slots on sibling creation/edit pipes inherit
+  the template's labels/colors and expand to its range. Connected slots retain
+  their actual identities, and copied placeholders do not add phantom fields to
+  the switch layout. Shared subgraph templates retain their instance context.
+- Label pipe outputs with the smallest enclosing canvas group's title, using
+  native group bounds and node centers. Restore the prior output label on leaving
+  the group. Refresh after graph edits and drawing, preserving existing hooks.
+- Give automatic switch outputs the first-connected input's label/colors.
+  Advertise its type when all connected sources agree; use wildcard for mixed
+  or unresolved types. Resolve these descriptions recursively through switches,
+  reroutes and subgraphs so receiving pipes see the same source label/type.
+- Treat a PipeValues payload containing only unavailable values as empty, so an
+  automatic switch can fall through to another pipe. Keep whole empty pipe
+  payloads as pipe values rather than upstream execution blockers, which would
+  prevent the switch from checking alternatives. Extraction emits silent native
+  execution blockers for missing/empty fields and accepts a None pipe safely.
+  False, zero and nonempty tensors remain valid. A blocked field stops its
+  dependent path, even when connected to an optional socket; native blockers
+  entering a switch still propagate under the engine's rules.
 - Store layouts in native serialized node properties, including layouts for each
   instance of a shared subgraph. Pipe creation and automatic selection use native
   fingerprint invalidation because hidden workflow metadata is excluded from the
@@ -135,6 +157,11 @@ Targets: ComfyUI **0.38.0** and ComfyUI_frontend **1.53.10**.
 - Named-switch checks covered reordered payloads, missing/extra fields, duplicate
   names, unchanged source payloads, chained switches/edit pipes, mixed ordinary
   values, per-instance subgraph layouts and actual V3 execution list streams.
+- Template/display checks covered connection chronology distinct from socket
+  order, configuration reloads, bypassed templates, connected-slot identity,
+  nested groups, title changes, restoration outside groups and typed/mixed
+  switch outputs. Native mapper checks verified empty-pipe fallback and that
+  consumers of absent extracted fields do not execute.
 - Execution checks covered primitives, lazy branches, lists, pipes, debugger
   output, JSON extraction/file refresh, metadata comparison, preview isolation
   across class clones, image validation and WebP EXIF parsing.
