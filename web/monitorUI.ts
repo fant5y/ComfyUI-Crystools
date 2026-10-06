@@ -273,13 +273,13 @@ export class MonitorUI extends ProgressBarUIBase {
 
     this.rootElement.style.display = 'flex';
     this.rootElement.style.flex = '0 0 auto';
-    this.rootElement.style.width = '100%';
-    this.rootElement.style.maxWidth = '100%';
+    this.rootElement.style.width = `${monitorsWidth}px`;
+    this.rootElement.style.maxWidth = 'none';
     this.rootElement.style.minWidth = '0';
-    this.rootElement.style.flexWrap = 'wrap';
+    this.rootElement.style.flexWrap = 'nowrap';
 
     monitors.forEach((element) => {
-      element.style.flex = `1 1 ${monitorWidth}px`;
+      element.style.flex = `0 0 ${monitorWidth}px`;
       element.style.width = 'auto';
       element.style.maxWidth = `${monitorWidth}px`;
       element.style.minWidth = '0';

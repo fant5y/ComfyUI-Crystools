@@ -37,17 +37,21 @@ Targets: ComfyUI **0.38.0** and ComfyUI_frontend **1.53.10**.
   the extension's actual directory name.
 - Remove the deprecated `scripts/ui/components/buttonGroup.js` import and
   the unused internal `scripts/utils.js` import.
-- Register a **Crystools** sidebar tab through
-  `app.extensionManager.registerSidebarTab`. Hardware monitors and execution
-  progress appear together in this tab. This replaces their old toolbar/menu
-  placement; it is a visible UI change.
+- Register an `actionBarButtons` anchor in the top bar alongside extension
+  buttons. Mount the hardware monitors and progress beside that anchor and
+  restore them when the frontend recreates the toolbar. The frontend exposes
+  no custom render hook for this bar; only the extension-owned anchor is
+  queried, without importing internal components or selecting Run-button DOM.
 - Register existing settings through `ComfyExtension.settings`, retaining
   their IDs and saved values, including dynamically discovered GPU controls.
 - Construct the monitor UI before registering settings, whose change callbacks
   can run immediately.
 - Load CSS relative to `import.meta.url`, so renamed installation folders
   and deployments under a URL prefix work.
-- Observe monitor size changes when the sidebar is mounted or resized.
+- Register the custom monitor event during module loading, before the frontend
+  opens its WebSocket. Retain the latest reading until setup and GPU discovery
+  finish, preventing the startup "Unknown message type" warning.
+- Observe monitor size changes when the toolbar is mounted or resized.
   Preserve progress clicks that center the current root-graph node and handle
   execution completion, including cached runs.
 - Update the committed JavaScript and declarations together with TypeScript.
@@ -65,10 +69,12 @@ Targets: ComfyUI **0.38.0** and ComfyUI_frontend **1.53.10**.
 - PNG saving, metadata inclusion/exclusion, image loading, preview and
   resolution were exercised with ComfyUI 0.38.0's actual image-save helpers
   and CPU tensor fixtures.
-- A DOM/module harness checked frontend imports, sidebar registration,
+- A DOM/module harness checked frontend imports, action-bar registration,
   initial settings callbacks, GPU discovery, telemetry rendering, progress
-  updates, node centering, sidebar remounting and CSS URLs for a renamed folder
-  under a URL prefix.
+  updates, node centering, toolbar remounting and CSS URLs for a renamed folder
+  under a URL prefix. The frontend
+  1.53.10 event registration and WebSocket dispatcher were exercised directly,
+  including monitor messages arriving before extension setup.
 
 These are isolated API/behavior checks. GPU tensor operations and the running
 ComfyUI server/frontend were not available for a full live-session test.

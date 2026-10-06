@@ -28,6 +28,7 @@ class CrystoolsMonitor {
   private monitorTemperatureSettings: TMonitorSettings[] = [];
 
   private monitorUI: MonitorUI;
+  private latestStats?: TStatsData;
 
   // private readonly monitorPositionId = 'Crystools.MonitorPosition';
   private readonly monitorWidthId = 'Crystools.MonitorWidth';
@@ -410,6 +411,9 @@ class CrystoolsMonitor {
   };
 
   finishedLoad = (): void => {
+    if (this.latestStats) {
+      this.monitorUI.updateDisplay(this.latestStats);
+    }
     this.monitorUI.orderMonitors();
     this.updateAllWidget();
 
@@ -515,20 +519,25 @@ class CrystoolsMonitor {
     );
 
     this.createSettings();
-    this.registerListeners();
+    if (this.latestStats) {
+      this.monitorUI.updateDisplay(this.latestStats);
+    }
   };
 
   registerListeners = (): void => {
-    api.addEventListener('crystools.monitor', (event: CustomEvent) => {
+    api.addCustomEventListener('crystools.monitor', (event: CustomEvent) => {
       if (event?.detail === undefined) {
         return;
       }
-      this.monitorUI.updateDisplay(event.detail);
+      this.latestStats = event.detail;
+      this.monitorUI?.updateDisplay(event.detail);
     }, false);
   };
 }
 
 const crystoolsMonitor = new CrystoolsMonitor();
+// Register before ComfyUI opens its socket; setup runs after node discovery.
+crystoolsMonitor.registerListeners();
 app.registerExtension({
   name: crystoolsMonitor.idExtensionName,
   setup: crystoolsMonitor.setup,

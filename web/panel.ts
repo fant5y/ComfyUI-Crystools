@@ -5,19 +5,28 @@ export const progressRoot = document.createElement('div');
 
 const panel = document.createElement('div');
 panel.classList.add('crystools-panel');
-panel.append(progressRoot, monitorRoot);
+panel.append(monitorRoot, progressRoot);
+
+// The action-bar API exposes buttons, but no render hook for live widgets.
+// Use our registered button as an anchor without depending on ComfyUI's DOM.
+const mountPanel = (): void => {
+  const anchor = document.querySelector<HTMLElement>('.crystools-toolbar-anchor');
+  if (anchor?.parentElement && panel.nextElementSibling !== anchor) {
+    anchor.before(panel);
+  }
+};
 
 app.registerExtension({
   name: 'Crystools.panel',
+  actionBarButtons: [{
+    icon: 'pi pi-chart-bar',
+    tooltip: 'Crystools hardware monitors',
+    class: 'crystools-toolbar-anchor',
+    onClick(): void {},
+  }],
   setup(): void {
-    app.extensionManager.registerSidebarTab({
-      id: 'crystools',
-      title: 'Crystools',
-      icon: 'pi pi-chart-bar',
-      type: 'custom',
-      render(container: HTMLElement): void {
-        container.append(panel);
-      },
-    });
+    mountPanel();
+    const observer = new MutationObserver(mountPanel);
+    observer.observe(document.body, {childList: true, subtree: true});
   },
 });

@@ -25,7 +25,7 @@ class CrystoolsProgressBar {
       id: this.idShowProgressBar,
       name: 'Show progress bar',
       category: ['Crystools', this.menuPrefix + ' Progress Bar', 'Show'],
-      tooltip: 'Show execution progress in the Crystools sidebar',
+      tooltip: 'Show execution progress below the hardware monitors',
       type: 'boolean',
       defaultValue: this.defaultShowStatus,
       onChange: this.progressBarUI.showProgressBar,

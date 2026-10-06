@@ -84,6 +84,12 @@ class CrystoolsMonitor {
             writable: true,
             value: void 0
         });
+        Object.defineProperty(this, "latestStats", {
+            enumerable: true,
+            configurable: true,
+            writable: true,
+            value: void 0
+        });
         Object.defineProperty(this, "monitorWidthId", {
             enumerable: true,
             configurable: true,
@@ -462,6 +468,9 @@ class CrystoolsMonitor {
             configurable: true,
             writable: true,
             value: () => {
+                if (this.latestStats) {
+                    this.monitorUI.updateDisplay(this.latestStats);
+                }
                 this.monitorUI.orderMonitors();
                 this.updateAllWidget();
                 const w = app.extensionManager.setting.get(this.monitorWidthId);
@@ -579,7 +588,9 @@ class CrystoolsMonitor {
                 const currentRate = Number(app.extensionManager.setting.get(this.settingsRate.id) ?? this.settingsRate.defaultValue);
                 this.monitorUI = new MonitorUI(monitorRoot, this.monitorCPUElement, this.monitorRAMElement, this.monitorHDDElement, this.monitorGPUSettings, this.monitorVRAMSettings, this.monitorTemperatureSettings, currentRate);
                 this.createSettings();
-                this.registerListeners();
+                if (this.latestStats) {
+                    this.monitorUI.updateDisplay(this.latestStats);
+                }
             }
         });
         Object.defineProperty(this, "registerListeners", {
@@ -587,17 +598,19 @@ class CrystoolsMonitor {
             configurable: true,
             writable: true,
             value: () => {
-                api.addEventListener('crystools.monitor', (event) => {
+                api.addCustomEventListener('crystools.monitor', (event) => {
                     if (event?.detail === undefined) {
                         return;
                     }
-                    this.monitorUI.updateDisplay(event.detail);
+                    this.latestStats = event.detail;
+                    this.monitorUI?.updateDisplay(event.detail);
                 }, false);
             }
         });
     }
 }
 const crystoolsMonitor = new CrystoolsMonitor();
+crystoolsMonitor.registerListeners();
 app.registerExtension({
     name: crystoolsMonitor.idExtensionName,
     setup: crystoolsMonitor.setup,

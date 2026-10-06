@@ -303,28 +303,35 @@
 
 
 
+.crystools-toolbar-anchor {
+  display: none !important;
+}
+
 .crystools-panel {
   display: flex;
+  flex: 0 1 auto;
   flex-direction: column;
-  gap: 12px;
-  padding: 12px;
+  gap: 4px;
+  max-width: 45vw;
+  padding: 2px 4px;
+  overflow-x: auto;
 }
 
 .crystools-panel #crystools-monitors-root {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-wrap: nowrap;
+  gap: 5px;
 }
 
 .crystools-panel #crystools-progressBar-root {
   position: relative;
-  min-height: 24px;
+  min-height: 16px;
   cursor: pointer;
 }
 
 .crystools-panel .crystools-progress-bar {
   position: relative;
-  height: 24px;
+  height: 16px;
   overflow: hidden;
   background: var(--comfy-input-bg);
 }
@@ -337,5 +344,6 @@
   position: absolute;
   inset: 0;
   text-align: center;
-  line-height: 24px;
+  font-size: 10px;
+  line-height: 16px;
 }
