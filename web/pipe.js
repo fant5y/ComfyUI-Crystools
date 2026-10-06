@@ -86,7 +86,7 @@ const uniqueHost = (graph) => {
     const hosts = graphsOf(graph).flatMap(owner => owner._nodes.filter(node => node.subgraph === graph));
     return hosts.length === 1 ? hosts[0] : undefined;
 };
-const resolveSource = (graph, link, context, visited, inputPath = new Set()) => {
+const resolveSource = (graph, link, context, visited, inputPath = new Set(), inactive = false) => {
     if (!link) {
         return undefined;
     }
@@ -99,20 +99,21 @@ const resolveSource = (graph, link, context, visited, inputPath = new Set()) => 
         if (!host?.graph || (typeof externalLinkId !== 'number' && typeof externalLinkId !== 'string')) {
             return undefined;
         }
-        return resolveSource(host.graph, host.graph.links.get(externalLinkId), context, visited, new Set(inputPath).add(graph));
+        return resolveSource(host.graph, host.graph.links.get(externalLinkId), context, visited, new Set(inputPath).add(graph), inactive || host.mode === 2 || host.mode === 4);
     }
     const node = graph.getNodeById(link.origin_id);
     if (!node || visited.has(node)) {
         return undefined;
     }
+    const unavailable = inactive || node.mode === 2 || node.mode === 4;
     if (node.subgraph) {
         const innerLink = node.subgraph.outputNode?.slots[link.origin_slot]?.getLinks()[0];
-        return resolveSource(node.subgraph, innerLink, new Map(context).set(node.subgraph, node), new Set(visited).add(node));
+        return resolveSource(node.subgraph, innerLink, new Map(context).set(node.subgraph, node), new Set(visited).add(node), inputPath, unavailable);
     }
     if (node.type === 'Reroute') {
-        return resolveSource(graph, node.getInputLink(0), context, new Set(visited).add(node));
+        return resolveSource(graph, node.getInputLink(0), context, new Set(visited).add(node), inputPath, unavailable);
     }
-    return { node, index: link.origin_slot, context, visited };
+    return { node, index: link.origin_slot, context, visited, inactive: unavailable };
 };
 const describeOutput = (source) => {
     const { node, index, visited, context } = source;
@@ -140,12 +141,29 @@ const describeSwitch = (node, visited, context) => {
         return undefined;
     }
     const path = new Set(visited).add(node);
-    const values = orderedInputs(node).map(index => {
+    const values = orderedInputs(node).sort((left, right) => left - right).map(index => {
         const source = resolveSource(node.graph, node.getInputLink(index), context, path);
-        return source ? describeOutput(source) : undefined;
+        return { description: source ? describeOutput(source) : undefined, inactive: source?.inactive };
     });
-    const first = values[0];
-    return first ? { ...first, type: values.every(value => value?.type === first.type) ? first.type : '*' } : undefined;
+    const first = values.find(value => !value.inactive && value.description)?.description;
+    const type = first && values.every(value => value.description?.type === first.type) ? first.type : '*';
+    return first ? { ...first, type } : undefined;
+};
+const refreshSwitchOutput = (node) => {
+    const output = node.outputs[0];
+    if (!output) {
+        return false;
+    }
+    const previous = [output.label, output.type, output.color_on, output.color_off];
+    decorateSlot(output, describeSwitch(node, new Set(), new Map()), true);
+    output.links?.forEach(id => {
+        const link = node.graph?.links.get(id);
+        if (link) {
+            link.type = output.type;
+        }
+    });
+    return [output.label, output.type, output.color_on, output.color_off]
+        .some((value, index) => value !== previous[index]);
 };
 const pipeSources = (node, visited, context) => {
     if (!node.graph || visited.has(node)) {
@@ -303,16 +321,7 @@ const refreshSwitch = (node) => {
         }
     });
     saveLayout(node, describePipe(node));
-    const output = node.outputs[0];
-    if (output) {
-        decorateSlot(output, describeSwitch(node, new Set(), new Map()), true);
-        output.links?.forEach(id => {
-            const link = node.graph?.links.get(id);
-            if (link) {
-                link.type = output.type;
-            }
-        });
-    }
+    refreshSwitchOutput(node);
     const count = Math.min(CAPACITY, Math.max(2, lastConnected + 2));
     const oldLength = node.inputs.length;
     while (node.inputs.length > count) {
@@ -433,7 +442,8 @@ app.registerExtension({
         const draw = prototype.onDrawForeground;
         prototype.onDrawForeground = function (...args) {
             const result = draw?.apply(this, args);
-            if (isPipe(this) && refreshGroupLabel(this)) {
+            const changed = this.type === SWITCH_ANY_AUTO ? refreshSwitchOutput(this) : refreshGroupLabel(this);
+            if (changed) {
                 scheduleRefresh(this.graph);
             }
             return result;

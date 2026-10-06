@@ -118,7 +118,10 @@ Targets: ComfyUI **0.38.0** and ComfyUI_frontend **1.53.10**.
 - Label pipe outputs with the smallest enclosing canvas group's title, using
   native group bounds and node centers. Restore the prior output label on leaving
   the group. Refresh after graph edits and drawing, preserving existing hooks.
-- Give automatic switch outputs the first-connected input's label/colors.
+- Give automatic switch outputs the first non-muted/non-bypassed input's
+  label/colors, checking top to bottom to match execution priority. Track mode
+  flags across reroutes and subgraph input/output boundaries. Refresh the display
+  after graph edits and during drawing, while keeping the saved template fixed.
   Advertise its type when all connected sources agree; use wildcard for mixed
   or unresolved types. Resolve these descriptions recursively through switches,
   reroutes and subgraphs so receiving pipes see the same source label/type.
@@ -162,6 +165,9 @@ Targets: ComfyUI **0.38.0** and ComfyUI_frontend **1.53.10**.
   nested groups, title changes, restoration outside groups and typed/mixed
   switch outputs. Native mapper checks verified empty-pipe fallback and that
   consumers of absent extracted fields do not execute.
+- Active output-label checks covered input priority distinct from connection
+  chronology, live mute/bypass toggles, downstream labels/colors, subgraph hosts,
+  reroutes and unchanged template layouts when no branch is active.
 - Execution checks covered primitives, lazy branches, lists, pipes, debugger
   output, JSON extraction/file refresh, metadata comparison, preview isolation
   across class clones, image validation and WebP EXIF parsing.
