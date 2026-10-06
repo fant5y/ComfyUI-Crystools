@@ -3,6 +3,7 @@ import { app } from './comfy/index.js';
 const PIPE_TO = 'Pipe to/edit any [Crystools]';
 const PIPE_FROM = 'Pipe from any [Crystools]';
 const CAPACITY = 100;
+const FIRST_AVAILABLE = 'First available any [Crystools]';
 
 interface Slot {
   name: string;
@@ -215,6 +216,39 @@ const refreshNode = (node: PipeNode): void => {
   }
 };
 
+const refreshSwitch = (node: PipeNode): void => {
+  let lastConnected = -1;
+  node.inputs.forEach((slot, index) => {
+    if (slot.link !== null && slot.link !== undefined) {
+      lastConnected = index;
+    }
+  });
+  const count = Math.min(CAPACITY, Math.max(2, lastConnected + 2));
+  const oldLength = node.inputs.length;
+  while (node.inputs.length > count) {
+    node.removeInput(node.inputs.length - 1);
+  }
+  while (node.inputs.length < count) {
+    node.addInput(`any_${node.inputs.length + 1}`, '*');
+  }
+  node.inputs.forEach((slot, index) => {
+    const source = node.graph && resolveSource(node.graph, node.getInputLink(index), new Map(), new Set());
+    decorateSlot(slot, source ? describeOutput(source) : undefined, false);
+  });
+  const size = node.computeSize();
+  if (oldLength !== count || size[0] > node.size[0]) {
+    node.setSize([Math.max(node.size[0], size[0]), oldLength !== count ? size[1] : node.size[1]]);
+  }
+};
+
+const refresh = (node: PipeNode): void => {
+  if (node.type === FIRST_AVAILABLE) {
+    refreshSwitch(node);
+  } else {
+    refreshNode(node);
+  }
+};
+
 const scheduleRefresh = (graph: PipeGraph | undefined): void => {
   const root = graph?.rootGraph || graph;
   if (!root || pendingGraphs.has(root)) {
@@ -225,7 +259,7 @@ const scheduleRefresh = (graph: PipeGraph | undefined): void => {
     try {
       for (const owner of graphsOf(root)) {
         observeGraph(owner);
-        owner._nodes.filter(isPipe).forEach(refreshNode);
+        owner._nodes.filter(node => isPipe(node) || node.type === FIRST_AVAILABLE).forEach(refresh);
         owner.setDirtyCanvas(true, true);
       }
     } finally {
@@ -268,14 +302,14 @@ app.registerExtension({
     scheduleRefresh(app.rootGraph);
   },
   beforeRegisterNodeDef(nodeType: {prototype: PipeNode}, nodeData: {name: string}): void {
-    if (nodeData.name !== PIPE_TO && nodeData.name !== PIPE_FROM) {
+    if (![PIPE_TO, PIPE_FROM, FIRST_AVAILABLE].includes(nodeData.name)) {
       return;
     }
     const prototype = nodeType.prototype;
     const created = prototype.onNodeCreated;
     prototype.onNodeCreated = function(this: PipeNode, ...args: unknown[]): unknown {
       const result = created?.apply(this, args);
-      refreshNode(this);
+      refresh(this);
       return result;
     };
     for (const hook of ['onConfigure', 'onAdded', 'onRemoved', 'onConnectionsChange'] as const) {

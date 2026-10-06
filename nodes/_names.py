@@ -28,6 +28,9 @@ class CLASSES(Enum):
     CLIST_STRING_NAME = 'List of strings [Crystools]'
     CLIST_STRING_DESC = prefix + 'List of strings'
 
+    CFIRST_AVAILABLE_NAME = 'First available any [Crystools]'
+    CFIRST_AVAILABLE_DESC = prefix + 'First available any'
+
     CSWITCH_FROM_ANY_NAME = 'Switch from any [Crystools]'
     CSWITCH_FROM_ANY_DESC = prefix + 'Switch from any'
     CSWITCH_ANY_NAME = 'Switch any [Crystools]'

@@ -4,7 +4,7 @@ Targets: ComfyUI **0.38.0** and ComfyUI_frontend **1.53.10**.
 
 ## Python
 
-- Register all 29 nodes through `ComfyExtension.get_node_list()` and
+- Register all 30 nodes through `ComfyExtension.get_node_list()` and
   `comfy_entrypoint()`; the legacy node mapping is removed.
 - Each node declares a native `io.Schema`, executes through a class method and
   returns `io.NodeOutput`. Existing node IDs, display names, input order,
@@ -80,13 +80,35 @@ Targets: ComfyUI **0.38.0** and ComfyUI_frontend **1.53.10**.
   guard. Existing callbacks are preserved. Additional output positions return
   None when absent, without changing the compact pipe payload.
 
+## First available any
+
+- Add a separate native V3 switch, retaining the existing boolean switches.
+  Start with two wildcard inputs, adding an empty slot as inputs are connected,
+  up to 100. Reuse the pipe resolver for connected labels/colors and subgraphs.
+- Select the first non-empty input from top to bottom. Skip None, whitespace-only
+  strings, empty built-in containers/bytes and tensors with no elements.
+  False, zero and black images are valid values; tensor truth testing is avoided.
+- Preserve ComfyUI list execution streams and opaque values. If every input is
+  unavailable, return a silent execution blocker to stop downstream nodes.
+- Use the submitted workflow and the native hidden execution ID to skip sources
+  originally muted/bypassed, including subgraph boundaries. This matters because
+  the frontend may rewire a bypassed node to its upstream input. No workflow
+  metadata is required for ordinary None/empty selection through direct API use.
+- Connected active branches are evaluated before selection; this node does not
+  lazily execute one candidate at a time. Normal ComfyUI execution blockers and
+  upstream errors still propagate according to the engine's execution rules.
+
 ## Validation
 
 - `npm ci` and `npm run validate`: TypeScript compilation and ESLint passed.
-- All 29 native classes passed the actual ComfyUI 0.38.0 V3 class/schema
+- All 30 native classes passed the actual ComfyUI 0.38.0 V3 class/schema
   validator. Contract comparisons against the repository's original classes
   confirmed input order/types/defaults, output types/names, categories,
   list flags and output-node flags.
+- First-available checks covered None/empty inputs, False/zero, empty tensors,
+  list streams, silent all-empty output and muted/bypassed sources in root and
+  subgraph workflows. The real 0.38.0 execution mapper/merger passed selection
+  and all-empty checks with native V3 class locking.
 - Pipe checks covered 100-value execution, sparse slots, non-mutating edits,
   label/color propagation, automatic growth, disconnects, connected-index
   retention and metadata cycles. Subgraph cases covered exported pipes, nested
