@@ -397,10 +397,16 @@ order. Give semantically different values distinct source output labels when
 both their label and type would otherwise be identical.
 
 An empty whole pipe can be skipped by the automatic switch. Extracting an absent
-or empty field produces a silent execution blocker: its dependent nodes do not
-run, even if the receiving socket is optional. Other available fields can still
-be used. Ordinary pipe editing remains positional; direct API pipes without
-workflow field metadata also retain positional behavior.
+or empty field into another **Pipe to/edit any** leaves that edit input unused:
+the inherited value stays in place, or the slot remains empty if it had no value.
+Other fields and later overrides continue through the pipe without extra switch
+nodes. Values never shift to fill an empty slot.
+
+For other receiving nodes, an absent or empty extraction still produces a silent
+execution blocker: its dependent nodes do not run, even if the receiving socket
+is optional. This pipe transport behavior does not change third-party nodes or
+ComfyUI's subgraph input requirements. Ordinary pipe editing remains positional;
+direct API pipes without workflow field metadata also retain positional behavior.
 
 The screenshots below show the original six-slot pipes.
  

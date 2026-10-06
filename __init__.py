@@ -20,7 +20,7 @@ from .nodes.debugger import CConsoleAny, CConsoleAnyToJson
 from .nodes.image import CImagePreviewFromImage, CImageLoadWithMetadata, CImageGetResolution, CImagePreviewFromMetadata, \
     CImageSaveWithExtraMetadata
 from .nodes.list import CListAny, CListString
-from .nodes.pipe import CPipeToAny, CPipeFromAny
+from .nodes.pipe import CPipeToAny, CPipeFromAny, CPipeEditInternal
 from .nodes.utils import CUtilsCompareJsons, CUtilsStatSystem
 from .nodes.metadata import CMetadataExtractor, CMetadataCompare
 from .nodes.parameters import CJsonFile, CJsonExtractor
@@ -49,6 +49,7 @@ class CrystoolsExtension(ComfyExtension):
             CSwitchBooleanString,
             CPipeToAny,
             CPipeFromAny,
+            CPipeEditInternal,
             CImageLoadWithMetadata,
             CImageGetResolution,
             CImagePreviewFromImage,

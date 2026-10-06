@@ -133,6 +133,13 @@ Targets: ComfyUI **0.38.0** and ComfyUI_frontend **1.53.10**.
   False, zero and nonempty tensors remain valid. A blocked field stops its
   dependent path, even when connected to an optional socket; native blockers
   entering a switch still propagate under the engine's rules.
+- Preserve pipe editing across missing extracted fields. Pipe to/edit any uses
+  native raw links and graph expansion to resolve Pipe from any field connections
+  through its intact whole-pipe output. A dev-only execution helper skips empty
+  extracted overrides before they can block the editor, preserving inherited
+  values, slot positions and unrelated overrides. The original workflow node IDs
+  and sockets remain unchanged; users do not need to add helper nodes. Scalar
+  extraction into other consumers retains the existing blocker behavior.
 - Store layouts in native serialized node properties, including layouts for each
   instance of a shared subgraph. Pipe creation and automatic selection use native
   fingerprint invalidation because hidden workflow metadata is excluded from the
@@ -144,7 +151,7 @@ Targets: ComfyUI **0.38.0** and ComfyUI_frontend **1.53.10**.
 ## Validation
 
 - `npm ci` and `npm run validate`: TypeScript compilation and ESLint passed.
-- All 30 native classes passed the actual ComfyUI 0.38.0 V3 class/schema
+- All 30 user-facing native classes and the pipe execution helper passed the actual ComfyUI 0.38.0 V3 class/schema
   validator. Contract comparisons against the repository's original classes
   confirmed input order/types/defaults, output types/names, categories,
   list flags and output-node flags.
@@ -190,6 +197,7 @@ adjacent work directory; they are not production dependencies.
 
 - [ComfyUI 0.38.0 node loader](https://github.com/Comfy-Org/ComfyUI/blob/v0.38.0/nodes.py)
 - [ComfyUI 0.38.0 native V3 API](https://github.com/Comfy-Org/ComfyUI/blob/v0.38.0/comfy_api/latest/_io.py)
+- [ComfyUI 0.38.0 graph expansion](https://github.com/Comfy-Org/ComfyUI/blob/v0.38.0/comfy_execution/graph_utils.py)
 - [Frontend 1.53.10 extension interfaces](https://github.com/Comfy-Org/ComfyUI_frontend/blob/v1.53.10/src/types/extensionTypes.ts)
 - [Frontend 1.53.10 extension registration](https://github.com/Comfy-Org/ComfyUI_frontend/blob/v1.53.10/src/services/extensionService.ts)
 - [Frontend 1.53.10 settings API](https://github.com/Comfy-Org/ComfyUI_frontend/blob/v1.53.10/src/scripts/ui/settings.ts)
