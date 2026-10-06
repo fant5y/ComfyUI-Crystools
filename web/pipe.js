@@ -2,7 +2,7 @@ import { app } from './comfy/index.js';
 const PIPE_TO = 'Pipe to/edit any [Crystools]';
 const PIPE_FROM = 'Pipe from any [Crystools]';
 const CAPACITY = 100;
-const FIRST_AVAILABLE = 'First available any [Crystools]';
+const SWITCH_ANY_AUTO = 'CSWITCH_ANY_AUTO';
 const isPipe = (node) => node.type === PIPE_TO || node.type === PIPE_FROM;
 const pendingGraphs = new WeakSet();
 const graphsOf = (graph) => {
@@ -154,7 +154,7 @@ const refreshSwitch = (node) => {
     }
 };
 const refresh = (node) => {
-    if (node.type === FIRST_AVAILABLE) {
+    if (node.type === SWITCH_ANY_AUTO) {
         refreshSwitch(node);
     }
     else {
@@ -171,7 +171,7 @@ const scheduleRefresh = (graph) => {
         try {
             for (const owner of graphsOf(root)) {
                 observeGraph(owner);
-                owner._nodes.filter(node => isPipe(node) || node.type === FIRST_AVAILABLE).forEach(refresh);
+                owner._nodes.filter(node => isPipe(node) || node.type === SWITCH_ANY_AUTO).forEach(refresh);
                 owner.setDirtyCanvas(true, true);
             }
         }
@@ -212,7 +212,7 @@ app.registerExtension({
         scheduleRefresh(app.rootGraph);
     },
     beforeRegisterNodeDef(nodeType, nodeData) {
-        if (![PIPE_TO, PIPE_FROM, FIRST_AVAILABLE].includes(nodeData.name)) {
+        if (![PIPE_TO, PIPE_FROM, SWITCH_ANY_AUTO].includes(nodeData.name)) {
             return;
         }
         const prototype = nodeType.prototype;

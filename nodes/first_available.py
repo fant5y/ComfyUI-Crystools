@@ -66,12 +66,12 @@ def _active_source(
     return True
 
 
-class CFirstAvailable(io.ComfyNode):
+class CSwitchAnyAuto(io.ComfyNode):
     @classmethod
     def define_schema(cls) -> io.Schema:
         return io.Schema(
-            node_id=CLASSES.CFIRST_AVAILABLE_NAME.value,
-            display_name=CLASSES.CFIRST_AVAILABLE_DESC.value,
+            node_id=CLASSES.CSWITCH_ANY_AUTO_NAME.value,
+            display_name=CLASSES.CSWITCH_ANY_AUTO_DESC.value,
             category=CATEGORY.MAIN.value + CATEGORY.SWITCH.value,
             description='Return the first non-empty input from top to bottom. Skip muted and bypassed sources.',
             inputs=[io.AnyType.Input(f'any_{index}', optional=True) for index in range(1, 101)],

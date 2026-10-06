@@ -3,7 +3,7 @@ import { app } from './comfy/index.js';
 const PIPE_TO = 'Pipe to/edit any [Crystools]';
 const PIPE_FROM = 'Pipe from any [Crystools]';
 const CAPACITY = 100;
-const FIRST_AVAILABLE = 'First available any [Crystools]';
+const SWITCH_ANY_AUTO = 'CSWITCH_ANY_AUTO';
 
 interface Slot {
   name: string;
@@ -242,7 +242,7 @@ const refreshSwitch = (node: PipeNode): void => {
 };
 
 const refresh = (node: PipeNode): void => {
-  if (node.type === FIRST_AVAILABLE) {
+  if (node.type === SWITCH_ANY_AUTO) {
     refreshSwitch(node);
   } else {
     refreshNode(node);
@@ -259,7 +259,7 @@ const scheduleRefresh = (graph: PipeGraph | undefined): void => {
     try {
       for (const owner of graphsOf(root)) {
         observeGraph(owner);
-        owner._nodes.filter(node => isPipe(node) || node.type === FIRST_AVAILABLE).forEach(refresh);
+        owner._nodes.filter(node => isPipe(node) || node.type === SWITCH_ANY_AUTO).forEach(refresh);
         owner.setDirtyCanvas(true, true);
       }
     } finally {
@@ -302,7 +302,7 @@ app.registerExtension({
     scheduleRefresh(app.rootGraph);
   },
   beforeRegisterNodeDef(nodeType: {prototype: PipeNode}, nodeData: {name: string}): void {
-    if (![PIPE_TO, PIPE_FROM, FIRST_AVAILABLE].includes(nodeData.name)) {
+    if (![PIPE_TO, PIPE_FROM, SWITCH_ANY_AUTO].includes(nodeData.name)) {
       return;
     }
     const prototype = nodeType.prototype;

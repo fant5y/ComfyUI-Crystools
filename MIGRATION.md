@@ -80,7 +80,7 @@ Targets: ComfyUI **0.38.0** and ComfyUI_frontend **1.53.10**.
   guard. Existing callbacks are preserved. Additional output positions return
   None when absent, without changing the compact pipe payload.
 
-## First available any
+## Switch Any (Auto)
 
 - Add a separate native V3 switch, retaining the existing boolean switches.
   Start with two wildcard inputs, adding an empty slot as inputs are connected,
