@@ -21,6 +21,11 @@ interface Link {
 }
 
 interface PipeGraph {
+  rootGraph?: PipeGraph;
+  subgraphs?: Map<string, PipeGraph>;
+  inputNode?: {id: number | string};
+  outputNode?: {slots: {getLinks(): Link[]}[]};
+  events?: {addEventListener(type: string, callback: () => void): void};
   _nodes: PipeNode[];
   links: Map<number | string, Link>;
   getNodeById(id: number | string): PipeNode | null;
@@ -30,6 +35,7 @@ interface PipeGraph {
 interface PipeNode {
   type: string;
   graph?: PipeGraph;
+  subgraph?: PipeGraph;
   inputs: Slot[];
   outputs: Slot[];
   size: [number, number];
@@ -57,17 +63,67 @@ interface ValueDescription {
 const isPipe = (node: PipeNode): boolean => node.type === PIPE_TO || node.type === PIPE_FROM;
 const pendingGraphs = new WeakSet<PipeGraph>();
 
+type InstanceContext = Map<PipeGraph, PipeNode>;
+
+interface Source {
+  node: PipeNode;
+  index: number;
+  context: InstanceContext;
+  visited: Set<PipeNode>;
+}
+
+const graphsOf = (graph: PipeGraph): PipeGraph[] => {
+  const root = graph.rootGraph || graph;
+  return [root, ...Array.from(root.subgraphs?.values() || [])];
+};
+
+const uniqueHost = (graph: PipeGraph): PipeNode | undefined => {
+  const hosts = graphsOf(graph).flatMap(owner => owner._nodes.filter(node => node.subgraph === graph));
+  // Shared definitions have no single external input; callers carry instance context.
+  return hosts.length === 1 ? hosts[0] : undefined;
+};
+
 // eslint-disable-next-line complexity
-const describeOutput = (node: PipeNode, index: number, visited: Set<PipeNode>): ValueDescription | undefined => {
-  if (node.type === 'Reroute' && !visited.has(node)) {
-    const link = node.graph && node.getInputLink(0);
-    const source = link && node.graph?.getNodeById(link.origin_id);
-    if (source && link) {
-      return describeOutput(source, link.origin_slot, new Set(visited).add(node));
-    }
+const resolveSource = (
+  graph: PipeGraph, link: Link | null | undefined, context: InstanceContext,
+  visited: Set<PipeNode>, inputPath = new Set<PipeGraph>(),
+): Source | undefined => {
+  if (!link) {
+    return undefined;
   }
+  if (graph.inputNode?.id === link.origin_id) {
+    if (inputPath.has(graph)) {
+      return undefined;
+    }
+    const host = context.get(graph) || uniqueHost(graph);
+    const externalLinkId = host?.inputs[link.origin_slot]?.link;
+    if (!host?.graph || (typeof externalLinkId !== 'number' && typeof externalLinkId !== 'string')) {
+      return undefined;
+    }
+    return resolveSource(
+      host.graph, host.graph.links.get(externalLinkId), context, visited, new Set(inputPath).add(graph),
+    );
+  }
+  const node = graph.getNodeById(link.origin_id);
+  if (!node || visited.has(node)) {
+    return undefined;
+  }
+  if (node.subgraph) {
+    const innerLink = node.subgraph.outputNode?.slots[link.origin_slot]?.getLinks()[0];
+    return resolveSource(
+      node.subgraph, innerLink, new Map(context).set(node.subgraph, node), new Set(visited).add(node),
+    );
+  }
+  if (node.type === 'Reroute') {
+    return resolveSource(graph, node.getInputLink(0), context, new Set(visited).add(node));
+  }
+  return {node, index: link.origin_slot, context, visited};
+};
+
+const describeOutput = (source: Source): ValueDescription | undefined => {
+  const {node, index, visited, context} = source;
   if (node.type === PIPE_FROM && index > 0) {
-    return describePipe(node, visited)[index - 1];
+    return describePipe(node, visited, context)[index - 1];
   }
   const slot = node.outputs[index];
   if (!slot) {
@@ -82,20 +138,20 @@ const describeOutput = (node: PipeNode, index: number, visited: Set<PipeNode>): 
   };
 };
 
-const describePipe = (node: PipeNode, visited = new Set<PipeNode>()): (ValueDescription | undefined)[] => {
+const describePipe = (
+  node: PipeNode, visited = new Set<PipeNode>(), context: InstanceContext = new Map(),
+): (ValueDescription | undefined)[] => {
   if (!node.graph || visited.has(node)) {
     return [];
   }
   const path = new Set(visited).add(node);
-  const link = node.getInputLink(0);
-  const parent = link && node.graph?.getNodeById(link.origin_id);
-  const values = parent && isPipe(parent) ? describePipe(parent, path) : [];
+  const parent = resolveSource(node.graph, node.getInputLink(0), context, path);
+  const values = parent && isPipe(parent.node) ? describePipe(parent.node, parent.visited, parent.context) : [];
   if (node.type === PIPE_TO) {
     node.inputs.slice(1).forEach((_slot, index) => {
-      const inputLink = node.getInputLink(index + 1);
-      const source = inputLink && node.graph?.getNodeById(inputLink.origin_id);
-      if (source && inputLink) {
-        values[index] = describeOutput(source, inputLink.origin_slot, path);
+      const source = resolveSource(node.graph!, node.getInputLink(index + 1), context, path);
+      if (source) {
+        values[index] = describeOutput(source);
       }
     });
   }
@@ -160,22 +216,57 @@ const refreshNode = (node: PipeNode): void => {
 };
 
 const scheduleRefresh = (graph: PipeGraph | undefined): void => {
-  if (!graph || pendingGraphs.has(graph)) {
+  const root = graph?.rootGraph || graph;
+  if (!root || pendingGraphs.has(root)) {
     return;
   }
-  pendingGraphs.add(graph);
+  pendingGraphs.add(root);
   queueMicrotask(() => {
     try {
-      graph._nodes.filter(isPipe).forEach(refreshNode);
-      graph.setDirtyCanvas(true, true);
+      for (const owner of graphsOf(root)) {
+        observeGraph(owner);
+        owner._nodes.filter(isPipe).forEach(refreshNode);
+        owner.setDirtyCanvas(true, true);
+      }
     } finally {
-      pendingGraphs.delete(graph);
+      pendingGraphs.delete(root);
     }
   });
 };
 
+const observedGraphs = new WeakSet<PipeGraph>();
+const observedHosts = new WeakSet<PipeNode>();
+
+const observeGraph = (graph: PipeGraph): void => {
+  if (!observedGraphs.has(graph)) {
+    observedGraphs.add(graph);
+    for (const event of [
+      'configured', 'node:added', 'node:removed', 'subgraph-created', 'convert-to-subgraph',
+      'node:slot-label:changed',
+    ]) {
+      graph.events?.addEventListener(event, () => scheduleRefresh(graph));
+    }
+  }
+  for (const host of graph._nodes.filter(node => node.subgraph)) {
+    if (observedHosts.has(host)) {
+      continue;
+    }
+    observedHosts.add(host);
+    const original = host.onConnectionsChange;
+    host.onConnectionsChange = function(this: PipeNode, ...args: unknown[]): unknown {
+      const result = original?.apply(this, args);
+      scheduleRefresh(this.graph);
+      return result;
+    };
+  }
+};
+
 app.registerExtension({
   name: 'Crystools.Pipes',
+  setup(): void {
+    observeGraph(app.rootGraph);
+    scheduleRefresh(app.rootGraph);
+  },
   beforeRegisterNodeDef(nodeType: {prototype: PipeNode}, nodeData: {name: string}): void {
     if (nodeData.name !== PIPE_TO && nodeData.name !== PIPE_FROM) {
       return;

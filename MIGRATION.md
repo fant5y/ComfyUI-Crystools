@@ -68,7 +68,12 @@ Targets: ComfyUI **0.38.0** and ComfyUI_frontend **1.53.10**.
 - Display each connected source output's label and socket colors. Input names
   remain `any_1`, `any_2`, etc.; labels never change the server's input keys.
   Value inputs stay wildcard sockets so they can be replaced with another type.
-- Propagate labels/types/colors through pipe chains and standard reroutes.
+- Propagate labels/types/colors through pipe chains, standard reroutes and native
+  subgraph input/output boundaries, including nested subgraphs. Resolve exported
+  pipes through their internal output links, retaining the host instance context
+  when resolving external inputs of shared subgraph definitions. Refresh the root
+  graph and its definitions after internal edits, workflow configuration and
+  subgraph conversion; preserve existing subgraph connection callbacks.
   An edit overrides its value position; disconnecting it restores the inherited
   label and value. Output link types track the resolved source type.
 - Refresh after creation, workflow loading and connection changes, with a cycle
@@ -84,7 +89,9 @@ Targets: ComfyUI **0.38.0** and ComfyUI_frontend **1.53.10**.
   list flags and output-node flags.
 - Pipe checks covered 100-value execution, sparse slots, non-mutating edits,
   label/color propagation, automatic growth, disconnects, connected-index
-  retention and metadata cycles.
+  retention and metadata cycles. Subgraph cases covered exported pipes, nested
+  input/output forwarding, internal edits, workflow configuration events and
+  distinct inputs on shared subgraph instances.
 - Execution checks covered primitives, lazy branches, lists, pipes, debugger
   output, JSON extraction/file refresh, metadata comparison, preview isolation
   across class clones, image validation and WebP EXIF parsing.
