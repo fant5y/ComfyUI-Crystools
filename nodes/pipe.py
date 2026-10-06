@@ -1,32 +1,40 @@
-from ..core import CATEGORY, any
+from comfy_api.latest import io
+from ..core import CATEGORY
 from ._names import CLASSES
 
 
-class CPipeToAny:
-    def __init__(self):
-        pass
+class CPipeToAny(io.ComfyNode):
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id=CLASSES.CPIPE_TO_ANY_NAME.value,
+            display_name=CLASSES.CPIPE_TO_ANY_DESC.value,
+            category=CATEGORY.MAIN.value + CATEGORY.PIPE.value,
+            inputs=[
+                io.Custom(CLASSES.CPIPE_ANY_TYPE.value).Input(CLASSES.CPIPE_ANY_TYPE.value, optional=True),
+                io.AnyType.Input('any_1', optional=True),
+                io.AnyType.Input('any_2', optional=True),
+                io.AnyType.Input('any_3', optional=True),
+                io.AnyType.Input('any_4', optional=True),
+                io.AnyType.Input('any_5', optional=True),
+                io.AnyType.Input('any_6', optional=True),
+            ],
+            outputs=[
+                io.Custom(CLASSES.CPIPE_ANY_TYPE.value).Output(),
+            ],
+        )
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {},
-            "optional": {
-                CLASSES.CPIPE_ANY_TYPE.value: (CLASSES.CPIPE_ANY_TYPE.value,),
-                "any_1": (any,),
-                "any_2": (any,),
-                "any_3": (any,),
-                "any_4": (any,),
-                "any_5": (any,),
-                "any_6": (any,),
-            }
-        }
-
-    CATEGORY = CATEGORY.MAIN.value + CATEGORY.PIPE.value
-    RETURN_TYPES = (CLASSES.CPIPE_ANY_TYPE.value,)
-
-    FUNCTION = "execute"
-
-    def execute(self, CPipeAny=None, any_1=None, any_2=None, any_3=None, any_4=None, any_5=None, any_6=None):
+    def execute(
+        cls,
+        CPipeAny: object = None,
+        any_1: object = None,
+        any_2: object = None,
+        any_3: object = None,
+        any_4: object = None,
+        any_5: object = None,
+        any_6: object = None,
+    ) -> io.NodeOutput:
         any_1_original = None
         any_2_original = None
         any_3_original = None
@@ -46,29 +54,31 @@ class CPipeToAny:
         CAnyPipeMod.append(any_5 if any_5 is not None else any_5_original)
         CAnyPipeMod.append(any_6 if any_6 is not None else any_6_original)
 
-        return (CAnyPipeMod,)
+        return io.NodeOutput(CAnyPipeMod)
 
 
-class CPipeFromAny:
-    def __init__(self):
-        pass
+class CPipeFromAny(io.ComfyNode):
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id=CLASSES.CPIPE_FROM_ANY_NAME.value,
+            display_name=CLASSES.CPIPE_FROM_ANY_DESC.value,
+            category=CATEGORY.MAIN.value + CATEGORY.PIPE.value,
+            inputs=[
+                io.Custom(CLASSES.CPIPE_ANY_TYPE.value).Input(CLASSES.CPIPE_ANY_TYPE.value),
+            ],
+            outputs=[
+                io.Custom(CLASSES.CPIPE_ANY_TYPE.value).Output(display_name=CLASSES.CPIPE_ANY_TYPE.value),
+                io.AnyType.Output(display_name='any_1'),
+                io.AnyType.Output(display_name='any_2'),
+                io.AnyType.Output(display_name='any_3'),
+                io.AnyType.Output(display_name='any_4'),
+                io.AnyType.Output(display_name='any_5'),
+                io.AnyType.Output(display_name='any_6'),
+            ],
+        )
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                CLASSES.CPIPE_ANY_TYPE.value: (CLASSES.CPIPE_ANY_TYPE.value,),
-            },
-            "optional": {
-            }
-        }
-
-    CATEGORY = CATEGORY.MAIN.value + CATEGORY.PIPE.value
-    RETURN_TYPES = (CLASSES.CPIPE_ANY_TYPE.value, any, any, any, any, any, any,)
-    RETURN_NAMES = (CLASSES.CPIPE_ANY_TYPE.value, "any_1", "any_2", "any_3", "any_4", "any_5", "any_6",)
-
-    FUNCTION = "execute"
-
-    def execute(self, CPipeAny=None, ):
+    def execute(cls, CPipeAny: object = None) -> io.NodeOutput:
         any_1, any_2, any_3, any_4, any_5, any_6 = CPipeAny
-        return CPipeAny, any_1, any_2, any_3, any_4, any_5, any_6
+        return io.NodeOutput(CPipeAny, any_1, any_2, any_3, any_4, any_5, any_6)

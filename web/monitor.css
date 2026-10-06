@@ -300,3 +300,42 @@
     text-align: left;
   }
 }
+
+
+
+.crystools-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+}
+
+.crystools-panel #crystools-monitors-root {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.crystools-panel #crystools-progressBar-root {
+  position: relative;
+  min-height: 24px;
+  cursor: pointer;
+}
+
+.crystools-panel .crystools-progress-bar {
+  position: relative;
+  height: 24px;
+  overflow: hidden;
+  background: var(--comfy-input-bg);
+}
+
+.crystools-panel #crystools-progressBar-root .crystools-slider {
+  height: 100%;
+}
+
+.crystools-panel #crystools-progressBar-root .crystools-label {
+  position: absolute;
+  inset: 0;
+  text-align: center;
+  line-height: 24px;
+}

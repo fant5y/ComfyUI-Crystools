@@ -4,13 +4,6 @@ export var EStatus;
     EStatus["executed"] = "Executed";
     EStatus["execution_error"] = "Execution error";
 })(EStatus || (EStatus = {}));
-export const ComfyKeyMenuDisplayOption = 'Comfy.UseNewMenu';
-export var MenuDisplayOptions;
-(function (MenuDisplayOptions) {
-    MenuDisplayOptions["Disabled"] = "Disabled";
-    MenuDisplayOptions["Top"] = "Top";
-    MenuDisplayOptions["Bottom"] = "Bottom";
-})(MenuDisplayOptions || (MenuDisplayOptions = {}));
 export class ProgressBarUIBase {
     constructor(rootId, rootElement) {
         Object.defineProperty(this, "rootId", {

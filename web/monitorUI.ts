@@ -8,6 +8,7 @@ export class MonitorUI extends ProgressBarUIBase {
   private monitorWidth = 60;
   private monitorHeight = 30;
   private readonly maxMonitorFontSize = 9;
+  private resizeObserver: ResizeObserver;
 
   constructor(
     public override rootElement: HTMLElement,
@@ -24,6 +25,8 @@ export class MonitorUI extends ProgressBarUIBase {
 
     this.styleSheet = createStyleSheet('crystools-monitors-size');
     this.updateMonitorLayout();
+    this.resizeObserver = new ResizeObserver(this.updateMonitorLayout);
+    this.resizeObserver.observe(this.rootElement);
     window.addEventListener('resize', this.updateMonitorLayout);
   }
 
@@ -269,11 +272,11 @@ export class MonitorUI extends ProgressBarUIBase {
     this.rootElement.style.setProperty('--crystools-monitors-width', `${monitorsWidth}px`);
 
     this.rootElement.style.display = 'flex';
-    this.rootElement.style.flex = `0 1 ${monitorsWidth}px`;
-    this.rootElement.style.width = `${monitorsWidth}px`;
+    this.rootElement.style.flex = '0 0 auto';
+    this.rootElement.style.width = '100%';
     this.rootElement.style.maxWidth = '100%';
     this.rootElement.style.minWidth = '0';
-    this.rootElement.style.flexWrap = 'nowrap';
+    this.rootElement.style.flexWrap = 'wrap';
 
     monitors.forEach((element) => {
       element.style.flex = `1 1 ${monitorWidth}px`;
@@ -286,7 +289,7 @@ export class MonitorUI extends ProgressBarUIBase {
 
   getResponsiveMonitorWidth = (monitors: HTMLElement[]): number => {
     const textElement = monitors[0]?.querySelector<HTMLElement>('.crystools-text');
-    const fontSize = textElement ? parseFloat(getComputedStyle(textElement).fontSize) : this.maxMonitorFontSize;
+    const fontSize = (textElement && parseFloat(getComputedStyle(textElement).fontSize)) || this.maxMonitorFontSize;
     const minWidth = Math.min(30, this.monitorWidth);
     const scale = Math.min(1, Math.max(minWidth / this.monitorWidth, fontSize / this.maxMonitorFontSize));
 

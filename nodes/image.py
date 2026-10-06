@@ -1,7 +1,8 @@
+from ..core.preview import get_preview_state
+from comfy_api.latest import io
+from ._names import CLASSES
 import fnmatch
 import os
-import random
-import sys
 import json
 import piexif
 import hashlib
@@ -16,43 +17,33 @@ from PIL.JpegImagePlugin import JpegImageFile
 from nodes import PreviewImage, SaveImage
 import folder_paths
 
-from ..core import CATEGORY, CONFIG, BOOLEAN, METADATA_RAW,TEXTS, setWidgetValues, logger, getResolutionByTensor, get_size
-
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "comfy"))
+from ..core import CATEGORY, CONFIG, TEXTS, setWidgetValues, logger, getResolutionByTensor, get_size
 
 
-class CImagePreviewFromImage(PreviewImage):
-    def __init__(self):
-        self.output_dir = folder_paths.get_temp_directory()
-        self.type = "temp"
-        self.prefix_append = "_" + ''.join(random.choice("abcdefghijklmnopqrstupvxyz") for x in range(5))
-        self.compress_level = 1
-        self.data_cached = None
-        self.data_cached_text = None
+
+class CImagePreviewFromImage(io.ComfyNode):
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id=CLASSES.CIMAGE_PREVIEW_IMAGE_NAME.value,
+            display_name=CLASSES.CIMAGE_PREVIEW_IMAGE_DESC.value,
+            category=CATEGORY.MAIN.value + CATEGORY.IMAGE.value,
+            inputs=[
+                io.Image.Input('image', optional=True),
+            ],
+            outputs=[
+                io.Custom('METADATA_RAW').Output(display_name='Metadata RAW'),
+            ],
+            hidden=[io.Hidden.prompt, io.Hidden.extra_pnginfo, io.Hidden.unique_id],
+            is_output_node=True,
+        )
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                # if it is required, in next node does not receive any value even the cache!
-            },
-            "optional": {
-                "image": ("IMAGE",),
-            },
-            "hidden": {
-                "prompt": "PROMPT",
-                "extra_pnginfo": "EXTRA_PNGINFO",
-            },
-        }
-
-    CATEGORY = CATEGORY.MAIN.value + CATEGORY.IMAGE.value
-    RETURN_TYPES = ("METADATA_RAW",)
-    RETURN_NAMES = ("Metadata RAW",)
-    OUTPUT_NODE = True
-
-    FUNCTION = "execute"
-
-    def execute(self, image=None, prompt=None, extra_pnginfo=None):
+    def execute(cls, image: io.Image.Type | None = None) -> io.NodeOutput:
+        prompt = cls.hidden.prompt
+        extra_pnginfo = cls.hidden.extra_pnginfo
+        state = get_preview_state("CImagePreviewFromImage", cls.hidden.unique_id)
+        saver = PreviewImage()
         text = ""
         title = ""
         data = {
@@ -64,9 +55,9 @@ class CImagePreviewFromImage(PreviewImage):
         }
 
         if image is not None:
-            saved = self.save_images(image, "crystools/i", prompt, extra_pnginfo)
+            saved = saver.save_images(image, "crystools/i", prompt, extra_pnginfo)
             image = saved["ui"]["images"][0]
-            image_path = Path(self.output_dir).joinpath(image["subfolder"], image["filename"])
+            image_path = Path(saver.output_dir).joinpath(image["subfolder"], image["filename"])
 
             img, promptFromImage, metadata = buildMetadata(image_path)
 
@@ -81,46 +72,42 @@ class CImagePreviewFromImage(PreviewImage):
             text += f"Current prompt (NO FROM IMAGE!):\n"
             text += json.dumps(promptFromImage, indent=CONFIG["indent"])
 
-            self.data_cached_text = text
-            self.data_cached = data
+            state["text"] = text
+            state["data"] = data
 
-        elif image is None and self.data_cached is not None:
+        elif image is None and state["data"] is not None:
             title = "Source: Image link - CACHED\n"
-            data = self.data_cached
-            text = self.data_cached_text
+            data = state["data"]
+            text = state["text"]
 
         else:
             logger.debug("Source: Empty on CImagePreviewFromImage")
             text = "Source: Empty"
 
         data['ui']['text'] = [title + text]
-        return data
+        return io.NodeOutput.from_dict(data)
 
 
-class CImagePreviewFromMetadata(PreviewImage):
-    def __init__(self):
-        self.data_cached = None
-        self.data_cached_text = None
+class CImagePreviewFromMetadata(io.ComfyNode):
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id=CLASSES.CIMAGE_PREVIEW_METADATA_NAME.value,
+            display_name=CLASSES.CIMAGE_PREVIEW_METADATA_DESC.value,
+            category=CATEGORY.MAIN.value + CATEGORY.IMAGE.value,
+            inputs=[
+                io.Custom('METADATA_RAW').Input('metadata_raw', optional=True),
+            ],
+            outputs=[
+                io.Custom('METADATA_RAW').Output(display_name='Metadata RAW'),
+            ],
+            hidden=[io.Hidden.unique_id],
+            is_output_node=True,
+        )
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                # if it is required, in next node does not receive any value even the cache!
-            },
-            "optional": {
-                "metadata_raw": METADATA_RAW,
-            },
-        }
-
-    CATEGORY = CATEGORY.MAIN.value + CATEGORY.IMAGE.value
-    RETURN_TYPES = ("METADATA_RAW",)
-    RETURN_NAMES = ("Metadata RAW",)
-    OUTPUT_NODE = True
-
-    FUNCTION = "execute"
-
-    def execute(self, metadata_raw=None):
+    def execute(cls, metadata_raw: object = None) -> io.NodeOutput:
+        state = get_preview_state("CImagePreviewFromMetadata", cls.hidden.unique_id)
         text = ""
         title = ""
         data = {
@@ -141,28 +128,29 @@ class CImagePreviewFromMetadata(PreviewImage):
             text += f"Prompt from image:\n"
             text += json.dumps(promptFromImage, indent=CONFIG["indent"])
 
-            images = self.resolveImage(metadata_raw["fileinfo"]["filename"])
+            images = cls.resolveImage(metadata_raw["fileinfo"]["filename"])
             result = metadata_raw
 
             data["result"] = [result]
             data["ui"]["images"] = images
 
-            self.data_cached_text = text
-            self.data_cached = data
+            state["text"] = text
+            state["data"] = data
 
-        elif metadata_raw is None and self.data_cached is not None:
+        elif metadata_raw is None and state["data"] is not None:
             title = "Source: Metadata RAW - CACHED\n"
-            data = self.data_cached
-            text = self.data_cached_text
+            data = state["data"]
+            text = state["text"]
 
         else:
             logger.debug("Source: Empty on CImagePreviewFromMetadata")
             text = "Source: Empty"
 
         data["ui"]["text"] = [title + text]
-        return data
+        return io.NodeOutput.from_dict(data)
 
-    def resolveImage(self, filename=None):
+    @classmethod
+    def resolveImage(cls, filename: str | None = None) -> list[dict]:
         images = []
 
         if filename is not None:
@@ -196,51 +184,43 @@ class CImagePreviewFromMetadata(PreviewImage):
         return images
 
 
-class CImageGetResolution:
-    def __init__(self):
-        pass
+class CImageGetResolution(io.ComfyNode):
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id=CLASSES.CIMAGE_GET_RESOLUTION_NAME.value,
+            display_name=CLASSES.CIMAGE_GET_RESOLUTION_DESC.value,
+            category=CATEGORY.MAIN.value + CATEGORY.IMAGE.value,
+            inputs=[
+                io.Image.Input('image'),
+            ],
+            outputs=[
+                io.Int.Output(display_name='width'),
+                io.Int.Output(display_name='height'),
+            ],
+            hidden=[io.Hidden.unique_id, io.Hidden.extra_pnginfo],
+            is_output_node=True,
+        )
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "image": ("IMAGE",),
-            },
-            "hidden": {
-                "unique_id": "UNIQUE_ID",
-                "extra_pnginfo": "EXTRA_PNGINFO",
-            },
-        }
-
-    CATEGORY = CATEGORY.MAIN.value + CATEGORY.IMAGE.value
-    RETURN_TYPES = ("INT", "INT",)
-    RETURN_NAMES = ("width", "height",)
-    OUTPUT_NODE = True
-
-    FUNCTION = "execute"
-
-    def execute(self, image, extra_pnginfo=None, unique_id=None):
+    def execute(cls, image: io.Image.Type) -> io.NodeOutput:
+        unique_id = cls.hidden.unique_id
+        extra_pnginfo = cls.hidden.extra_pnginfo
         res = getResolutionByTensor(image)
         text = [f"{res['x']}x{res['y']}"]
         setWidgetValues(text, unique_id, extra_pnginfo)
         logger.debug(f"Resolution: {text}")
-        return {"ui": {"text": text}, "result": (res["x"], res["y"])}
+        return io.NodeOutput.from_dict({'ui': {'text': text}, 'result': (res['x'], res['y'])})
 
 
 # subfolders based on: https://github.com/catscandrive/comfyui-imagesubfolders
-class CImageLoadWithMetadata:
-    def __init__(self):
-        pass
-
+class CImageLoadWithMetadata(io.ComfyNode):
     @classmethod
-    def INPUT_TYPES(cls):
+    def define_schema(cls) -> io.Schema:
         input_dir = folder_paths.get_input_directory()
-
         exclude_files = {"Thumbs.db", "*.DS_Store", "desktop.ini", "*.lock" }
         exclude_folders = {"clipspace", ".*"}
-
         file_list = []
-
         for root, dirs, files in os.walk(input_dir, followlinks=True):
             # Exclude specific folders
             dirs[:] = [d for d in dirs if not any(fnmatch.fnmatch(d, exclude) for exclude in exclude_folders)]
@@ -252,21 +232,24 @@ class CImageLoadWithMetadata:
                 # fix for windows
                 relpath = relpath.replace("\\", "/")
                 file_list.append(relpath)
+        return io.Schema(
+            node_id=CLASSES.CIMAGE_LOAD_METADATA_NAME.value,
+            display_name=CLASSES.CIMAGE_LOAD_METADATA_DESC.value,
+            category=CATEGORY.MAIN.value + CATEGORY.IMAGE.value,
+            inputs=[
+                io.Combo.Input('image', options=sorted(file_list), upload=io.UploadType.image),
+            ],
+            outputs=[
+                io.Image.Output(display_name='image'),
+                io.Mask.Output(display_name='mask'),
+                io.Custom('JSON').Output(display_name='prompt'),
+                io.Custom('METADATA_RAW').Output(display_name='Metadata RAW'),
+            ],
+            is_output_node=True,
+        )
 
-        return {
-            "required": {
-                "image": (sorted(file_list), {"image_upload": True})
-            },
-        }
-
-    CATEGORY = CATEGORY.MAIN.value + CATEGORY.IMAGE.value
-    RETURN_TYPES = ("IMAGE", "MASK", "JSON", "METADATA_RAW")
-    RETURN_NAMES = ("image", "mask", "prompt", "Metadata RAW")
-    OUTPUT_NODE = True
-
-    FUNCTION = "execute"
-
-    def execute(self, image):
+    @classmethod
+    def execute(cls, image: str) -> io.NodeOutput:
         image_path = folder_paths.get_annotated_filepath(image)
 
         imgF = Image.open(image_path)
@@ -275,7 +258,8 @@ class CImageLoadWithMetadata:
             # Use piexif to extract EXIF data from WebP image
             try:
               exif_data = piexif.load(image_path)
-              prompt, metadata = self.process_exif_data(exif_data)
+              prompt, exif_metadata = cls.process_exif_data(exif_data)
+              metadata.update(exif_metadata)
             except ValueError:
               prompt = {}
 
@@ -289,38 +273,35 @@ class CImageLoadWithMetadata:
         else:
             mask = torch.zeros((64, 64), dtype=torch.float32, device="cpu")
 
-        return image, mask.unsqueeze(0), prompt, metadata
+        return io.NodeOutput(image, mask.unsqueeze(0), prompt, metadata)
 
-    def process_exif_data(self, exif_data):
+    @classmethod
+    def process_exif_data(cls, exif_data: dict) -> tuple[object, dict]:
         metadata = {}
-        # 检查 '0th' 键下的 271 值，提取 Prompt 信息
+        # EXIF Make carries the generation prompt in this WebP format.
         if '0th' in exif_data and 271 in exif_data['0th']:
             prompt_data = exif_data['0th'][271].decode('utf-8')
-            # 移除可能的前缀 'Prompt:'
+            # Remove the optional label before decoding JSON.
             prompt_data = prompt_data.replace('Prompt:', '', 1)
-            # 假设 prompt_data 是一个字符串，尝试将其转换为 JSON 对象
             try:
                 metadata['prompt'] = json.loads(prompt_data)
             except json.JSONDecodeError:
                 metadata['prompt'] = prompt_data
 
-        # 检查 '0th' 键下的 270 值，提取 Workflow 信息
+        # EXIF ImageDescription carries the workflow.
         if '0th' in exif_data and 270 in exif_data['0th']:
             workflow_data = exif_data['0th'][270].decode('utf-8')
-            # 移除可能的前缀 'Workflow:'
             workflow_data = workflow_data.replace('Workflow:', '', 1)
             try:
-                # 尝试将字节字符串转换为 JSON 对象
                 metadata['workflow'] = json.loads(workflow_data)
             except json.JSONDecodeError:
-                # 如果转换失败，则将原始字符串存储在 metadata 中
                 metadata['workflow'] = workflow_data
 
         metadata.update(exif_data)
-        return metadata
+        return metadata.get("prompt", {}), metadata
 
     @classmethod
-    def IS_CHANGED(cls, image):
+    def fingerprint_inputs(cls, image: str) -> str | float:
         image_path = folder_paths.get_annotated_filepath(image)
         m = hashlib.sha256()
         with open(image_path, 'rb') as f:
@@ -328,58 +309,44 @@ class CImageLoadWithMetadata:
         return m.digest().hex()
 
     @classmethod
-    def VALIDATE_INPUTS(cls, image):
+    def validate_inputs(cls, image: str) -> bool | str:
         if not folder_paths.exists_annotated_filepath(image):
             return "Invalid image file: {}".format(image)
 
         return True
 
 
-class CImageSaveWithExtraMetadata(SaveImage):
-    def __init__(self):
-        super().__init__()
-        self.data_cached = None
-        self.data_cached_text = None
+class CImageSaveWithExtraMetadata(io.ComfyNode):
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id=CLASSES.CIMAGE_SAVE_METADATA_NAME.value,
+            display_name=CLASSES.CIMAGE_SAVE_METADATA_DESC.value,
+            category=CATEGORY.MAIN.value + CATEGORY.IMAGE.value,
+            inputs=[
+                io.Image.Input('image'),
+                io.String.Input('filename_prefix', default='ComfyUI'),
+                io.Boolean.Input('with_workflow', default=True),
+                io.String.Input('metadata_extra', optional=True, multiline=True, default=json.dumps({'Title': 'Image generated by Crystian', 'Description': 'More info: https://www.instagram.com/crystian.ia', 'Author': 'crystian.ia', 'Software': 'ComfyUI', 'Category': 'StableDiffusion', 'Rating': 5, 'UserComment': '', 'Keywords': [''], 'Copyrights': ''}, indent=CONFIG['indent']).replace('\\/', '/')),
+            ],
+            outputs=[
+                io.Custom('METADATA_RAW').Output(display_name='Metadata RAW'),
+            ],
+            hidden=[io.Hidden.prompt, io.Hidden.extra_pnginfo],
+            is_output_node=True,
+        )
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                # if it is required, in next node does not receive any value even the cache!
-                "image": ("IMAGE",),
-                "filename_prefix": ("STRING", {"default": "ComfyUI"}),
-                "with_workflow": BOOLEAN,
-            },
-            "optional": {
-                "metadata_extra": ("STRING", {"multiline": True, "default": json.dumps({
-                  "Title": "Image generated by Crystian",
-                  "Description": "More info: https://www.instagram.com/crystian.ia",
-                  "Author": "crystian.ia",
-                  "Software": "ComfyUI",
-                  "Category": "StableDiffusion",
-                  "Rating": 5,
-                  "UserComment": "",
-                  "Keywords": [
-                    ""
-                  ],
-                  "Copyrights": "",
-                }, indent=CONFIG["indent"]).replace("\\/", "/"),
-                }),
-            },
-            "hidden": {
-                "prompt": "PROMPT",
-                "extra_pnginfo": "EXTRA_PNGINFO",
-            },
-        }
-
-    CATEGORY = CATEGORY.MAIN.value + CATEGORY.IMAGE.value
-    RETURN_TYPES = ("METADATA_RAW",)
-    RETURN_NAMES = ("Metadata RAW",)
-    OUTPUT_NODE = True
-
-    FUNCTION = "execute"
-
-    def execute(self, image=None, filename_prefix="ComfyUI", with_workflow=True, metadata_extra=None, prompt=None, extra_pnginfo=None):
+    def execute(
+        cls,
+        image: io.Image.Type | None = None,
+        filename_prefix: str = 'ComfyUI',
+        with_workflow: bool = True,
+        metadata_extra: str | None = None,
+    ) -> io.NodeOutput:
+        prompt = cls.hidden.prompt
+        extra_pnginfo = cls.hidden.extra_pnginfo
+        saver = SaveImage()
         data = {
             "result": [''],
             "ui": {
@@ -389,8 +356,8 @@ class CImageSaveWithExtraMetadata(SaveImage):
         }
         if image is not None:
             if with_workflow is True:
-                extra_pnginfo_new = extra_pnginfo.copy()
-                prompt = prompt.copy()
+                extra_pnginfo_new = extra_pnginfo.copy() if extra_pnginfo else {}
+                prompt = prompt.copy() if prompt else None
             else:
                 extra_pnginfo_new = None
                 prompt = None
@@ -410,10 +377,10 @@ class CImageSaveWithExtraMetadata(SaveImage):
 
                         extra_pnginfo_new[k] = v
 
-            saved = super().save_images(image, filename_prefix, prompt, extra_pnginfo_new)
+            saved = saver.save_images(image, filename_prefix, prompt, extra_pnginfo_new)
 
             image = saved["ui"]["images"][0]
-            image_path = Path(self.output_dir).joinpath(image["subfolder"], image["filename"])
+            image_path = Path(saver.output_dir).joinpath(image["subfolder"], image["filename"])
             img, promptFromImage, metadata = buildMetadata(image_path)
 
             images = [image]
@@ -425,7 +392,7 @@ class CImageSaveWithExtraMetadata(SaveImage):
         else:
             logger.debug("Source: Empty on CImageSaveWithExtraMetadata")
 
-        return data
+        return io.NodeOutput.from_dict(data)
 
 
 

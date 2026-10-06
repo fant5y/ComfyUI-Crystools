@@ -1,39 +1,38 @@
+from comfy_api.latest import io
+from ._names import CLASSES
 import json
-from ..core import CONFIG, CATEGORY, BOOLEAN, BOOLEAN_FALSE, KEYS, TEXTS, STRING, logger, any
+from ..core import CONFIG, CATEGORY, KEYS, TEXTS, logger
 
-class CConsoleAny:
-    def __init__(self):
-        pass
+class CConsoleAny(io.ComfyNode):
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id=CLASSES.CDEBUGGER_CONSOLE_ANY_NAME.value,
+            display_name=CLASSES.CDEBUGGER_ANY_DESC.value,
+            category=CATEGORY.MAIN.value + CATEGORY.DEBUGGER.value,
+            inputs=[
+                io.AnyType.Input('any_value', optional=True),
+                io.Boolean.Input('console', optional=True, default=False),
+                io.Boolean.Input('display', optional=True, default=True),
+                io.String.Input(KEYS.PREFIX.value, optional=True, default=''),
+            ],
+            outputs=[
+            ],
+            is_input_list=True,
+            is_output_node=True,
+        )
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-            },
-            "optional": {
-                "any_value": (any,),
-                "console": BOOLEAN_FALSE,
-                "display": BOOLEAN,
-                KEYS.PREFIX.value: STRING,
-            },
-            "hidden": {
-                # "unique_id": "UNIQUE_ID",
-                # "extra_pnginfo": "EXTRA_PNGINFO",
-            },
-        }
-
-    CATEGORY = CATEGORY.MAIN.value + CATEGORY.DEBUGGER.value
-    INPUT_IS_LIST = True
-
-    RETURN_TYPES = ()
-    OUTPUT_NODE = True
-
-    FUNCTION = "execute"
-
-    def execute(self, any_value=None, console=False, display=True, prefix=None):
-        console = console[0]
-        display = display[0]
-        prefix = prefix[0]
+    def execute(
+        cls,
+        any_value: list[object] | None = None,
+        console: list[bool] | None = None,
+        display: list[bool] | None = None,
+        prefix: list[str] | None = None,
+    ) -> io.NodeOutput:
+        console = console[0] if console else False
+        display = display[0] if display else True
+        prefix = prefix[0] if prefix else ""
         text = ""
         textToDisplay = TEXTS.INACTIVE_MSG.value
 
@@ -69,33 +68,28 @@ class CConsoleAny:
         value = [console, display, prefix, textToDisplay]
         # setWidgetValues(value, unique_id, extra_pnginfo)
 
-        return {"ui": {"text": value}}
+        return io.NodeOutput.from_dict({'ui': {'text': value}})
 
 
-class CConsoleAnyToJson:
-    def __init__(self):
-        pass
+class CConsoleAnyToJson(io.ComfyNode):
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id=CLASSES.CDEBUGGER_CONSOLE_ANY_TO_JSON_NAME.value,
+            display_name=CLASSES.CDEBUGGER_CONSOLE_ANY_TO_JSON_DESC.value,
+            category=CATEGORY.MAIN.value + CATEGORY.DEBUGGER.value,
+            inputs=[
+                io.AnyType.Input('any_value', optional=True),
+            ],
+            outputs=[
+                io.String.Output(display_name='string'),
+            ],
+            is_input_list=True,
+            is_output_node=True,
+        )
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-            },
-            "optional": {
-                "any_value": (any,),
-            },
-        }
-
-    CATEGORY = CATEGORY.MAIN.value + CATEGORY.DEBUGGER.value
-    INPUT_IS_LIST = True
-
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("string",)
-    OUTPUT_NODE = True
-
-    FUNCTION = "execute"
-
-    def execute(self, any_value=None):
+    def execute(cls, any_value: list[object] | None = None) -> io.NodeOutput:
         text = TEXTS.INACTIVE_MSG.value
 
         if any_value is not None and isinstance(any_value, list):
@@ -120,4 +114,4 @@ class CConsoleAnyToJson:
 
         logger.debug(f"Show any-json to console is running...")
 
-        return {"ui": {"text": [text]}, "result": (text,)}
+        return io.NodeOutput.from_dict({'ui': {'text': [text]}, 'result': (text,)})

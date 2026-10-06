@@ -1,5 +1,7 @@
-import { utils } from './comfy/index.js';
-utils.addStylesheet('extensions/ComfyUI-Crystools/monitor.css');
+const stylesheet = document.createElement('link');
+stylesheet.rel = 'stylesheet';
+stylesheet.href = new URL('./monitor.css', import.meta.url).href;
+document.head.append(stylesheet);
 export var Styles;
 (function (Styles) {
     Styles["BARS"] = "BARS";

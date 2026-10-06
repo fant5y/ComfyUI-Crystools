@@ -1,9 +1,9 @@
-import { app, api, ComfyButtonGroup } from './comfy/index.js';
+import { app, api } from './comfy/index.js';
 import { commonPrefix } from './common.js';
 import { MonitorUI } from './monitorUI.js';
 import { Colors } from './styles.js';
 import { convertNumberToPascalCase } from './utils.js';
-import { ComfyKeyMenuDisplayOption, MenuDisplayOptions } from './progressBarUIBase.js';
+import { monitorRoot } from './panel.js';
 class CrystoolsMonitor {
     constructor() {
         Object.defineProperty(this, "idExtensionName", {
@@ -17,18 +17,6 @@ class CrystoolsMonitor {
             configurable: true,
             writable: true,
             value: commonPrefix
-        });
-        Object.defineProperty(this, "menuDisplayOption", {
-            enumerable: true,
-            configurable: true,
-            writable: true,
-            value: MenuDisplayOptions.Disabled
-        });
-        Object.defineProperty(this, "crystoolsButtonGroup", {
-            enumerable: true,
-            configurable: true,
-            writable: true,
-            value: null
         });
         Object.defineProperty(this, "settingsRate", {
             enumerable: true,
@@ -331,7 +319,7 @@ class CrystoolsMonitor {
                     },
                 };
                 this.monitorGPUSettings[index] = monitorGPUNElement;
-                app.ui.settings.addSetting(this.monitorGPUSettings[index]);
+                app.registerExtension({ name: 'Crystools.GpuUsage.' + index, settings: [monitorGPUNElement] });
                 this.monitorUI.createDOMGPUMonitor(this.monitorGPUSettings[index]);
             }
         });
@@ -365,7 +353,7 @@ class CrystoolsMonitor {
                     },
                 };
                 this.monitorVRAMSettings[index] = monitorVRAMNElement;
-                app.ui.settings.addSetting(this.monitorVRAMSettings[index]);
+                app.registerExtension({ name: 'Crystools.GpuVram.' + index, settings: [monitorVRAMNElement] });
                 this.monitorUI.createDOMGPUMonitor(this.monitorVRAMSettings[index]);
             }
         });
@@ -400,7 +388,7 @@ class CrystoolsMonitor {
                     },
                 };
                 this.monitorTemperatureSettings[index] = monitorTemperatureNElement;
-                app.ui.settings.addSetting(this.monitorTemperatureSettings[index]);
+                app.registerExtension({ name: 'Crystools.GpuTemperature.' + index, settings: [monitorTemperatureNElement] });
                 this.monitorUI.createDOMGPUMonitor(this.monitorTemperatureSettings[index]);
             }
         });
@@ -444,16 +432,17 @@ class CrystoolsMonitor {
             configurable: true,
             writable: true,
             value: () => {
-                app.ui.settings.addSetting(this.settingsRate);
-                app.ui.settings.addSetting(this.settingsMonitorHeight);
-                app.ui.settings.addSetting(this.settingsMonitorWidth);
-                app.ui.settings.addSetting(this.monitorRAMElement);
-                app.ui.settings.addSetting(this.monitorCPUElement);
+                app.registerExtension({
+                    name: 'Crystools.MonitorSettings',
+                    settings: [
+                        this.settingsRate, this.settingsMonitorHeight, this.settingsMonitorWidth,
+                        this.monitorRAMElement, this.monitorCPUElement, this.monitorHDDElement,
+                    ],
+                });
                 void this.getHDDsFromServer().then((data) => {
                     this.settingsHDD.options = data;
-                    app.ui.settings.addSetting(this.settingsHDD);
+                    app.registerExtension({ name: 'Crystools.HddSettings', settings: [this.settingsHDD] });
                 });
-                app.ui.settings.addSetting(this.monitorHDDElement);
                 void this.getGPUsFromServer().then((gpus) => {
                     let moreThanOneGPU = false;
                     if (gpus.length > 1) {
@@ -475,43 +464,9 @@ class CrystoolsMonitor {
             value: () => {
                 this.monitorUI.orderMonitors();
                 this.updateAllWidget();
-                this.moveMonitor(this.menuDisplayOption);
                 const w = app.extensionManager.setting.get(this.monitorWidthId);
                 const h = app.extensionManager.setting.get(this.monitorHeightId);
                 this.monitorUI.updateMonitorSize(w, h);
-            }
-        });
-        Object.defineProperty(this, "updateDisplay", {
-            enumerable: true,
-            configurable: true,
-            writable: true,
-            value: (value) => {
-                if (value !== this.menuDisplayOption) {
-                    this.menuDisplayOption = value;
-                    this.moveMonitor(this.menuDisplayOption);
-                }
-            }
-        });
-        Object.defineProperty(this, "moveMonitor", {
-            enumerable: true,
-            configurable: true,
-            writable: true,
-            value: (menuPosition) => {
-                let parentElement;
-                switch (menuPosition) {
-                    case MenuDisplayOptions.Disabled:
-                        parentElement = document.getElementById('queue-button');
-                        if (parentElement && this.monitorUI.rootElement) {
-                            parentElement.insertAdjacentElement('afterend', this.crystoolsButtonGroup.element);
-                        }
-                        else {
-                            console.error('Crystools: parentElement to move monitors not found!', parentElement);
-                        }
-                        break;
-                    case MenuDisplayOptions.Top:
-                    case MenuDisplayOptions.Bottom:
-                        app.menu?.settingsGroup.element.before(this.crystoolsButtonGroup.element);
-                }
             }
         });
         Object.defineProperty(this, "updateAllWidget", {
@@ -621,16 +576,9 @@ class CrystoolsMonitor {
                 this.createSettingsCPU();
                 this.createSettingsRAM();
                 this.createSettingsHDD();
+                const currentRate = Number(app.extensionManager.setting.get(this.settingsRate.id) ?? this.settingsRate.defaultValue);
+                this.monitorUI = new MonitorUI(monitorRoot, this.monitorCPUElement, this.monitorRAMElement, this.monitorHDDElement, this.monitorGPUSettings, this.monitorVRAMSettings, this.monitorTemperatureSettings, currentRate);
                 this.createSettings();
-                const currentRate = parseFloat(app.extensionManager.setting.get(this.settingsRate.id));
-                this.menuDisplayOption = app.extensionManager.setting.get(ComfyKeyMenuDisplayOption);
-                app.ui.settings.addEventListener(`${ComfyKeyMenuDisplayOption}.change`, (e) => {
-                    this.updateDisplay(e.detail.value);
-                });
-                this.crystoolsButtonGroup = new ComfyButtonGroup();
-                app.menu?.settingsGroup.element.before(this.crystoolsButtonGroup.element);
-                this.monitorUI = new MonitorUI(this.crystoolsButtonGroup.element, this.monitorCPUElement, this.monitorRAMElement, this.monitorHDDElement, this.monitorGPUSettings, this.monitorVRAMSettings, this.monitorTemperatureSettings, currentRate);
-                this.updateDisplay(this.menuDisplayOption);
                 this.registerListeners();
             }
         });
