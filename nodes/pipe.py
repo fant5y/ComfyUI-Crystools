@@ -55,7 +55,14 @@ def edit_pipe(pipe_source: list[object] | None, values: dict[str, object],
         value = values.get(f'any_{index + 1}')
         if not empty_value(value):
             pipe[index] = value
-            layout[index] = descriptions[index] if index < len(descriptions) else None
+            description = descriptions[index] if index < len(descriptions) else None
+            layout[index] = (
+                {key: item for key, item in description.items() if key != 'alternatives'}
+                if description else None
+            )
+        elif layout[index] is None and empty_value(pipe[index]) and index < len(descriptions):
+            # Empty declared fields still reserve their duplicate occurrence.
+            layout[index] = descriptions[index]
     return PipeValues(pipe, layout)
 
 
@@ -91,8 +98,17 @@ class CPipeToAny(io.ComfyNode):
 
         dependencies = {}
         guards = {}
+        extracted = {}
+        values = dict(values)
         for name, value in values.items():
             if not is_link(value):
+                continue
+            upstream = dynprompt.get_node(value[0])
+            if upstream['class_type'] == CLASSES.CPIPE_FROM_ANY_NAME.value and value[1] > 0:
+                # Carry the whole pipe so a retained fallback keeps its actual
+                # field identity when extracted and packed into another pipe.
+                extracted[name] = int(value[1]) - 1
+                values[name] = [value[0], 0]
                 continue
             fields = required_pipe_fields(dynprompt, value[0], set())
             if fields:
@@ -103,7 +119,7 @@ class CPipeToAny(io.ComfyNode):
                     dependencies[name].append((guard_name, index))
 
         graph = GraphBuilder()
-        context = {'layout': descriptions}
+        context = {'layout': descriptions, 'extracted': extracted}
         if dependencies:
             context.update(values=values, dependencies=dependencies, display_id=cls.hidden.unique_id)
             editor = graph.node(PIPE_GUARD_INTERNAL, CPipeAny=CPipeAny, context=context, **guards)
@@ -141,7 +157,8 @@ class CPipeOverrideGuard(io.ComfyNode):
         graph = GraphBuilder()
         # Evaluated pipe payloads can resemble links (e.g. ['text', 1]); carry the
         # base inside context so expansion never misinterprets it as a graph edge.
-        editor = graph.node(PIPE_EDIT_INTERNAL, context={'layout': context['layout'], 'base': CPipeAny}, **values)
+        editor = graph.node(PIPE_EDIT_INTERNAL, context={'layout': context['layout'], 'base': CPipeAny,
+                         'extracted': context.get('extracted', {})}, **values)
         editor.set_override_display_id(context['display_id'])
         return io.NodeOutput(editor.out(0), expand=graph.finalize())
 
@@ -166,7 +183,23 @@ class CPipeEditInternal(io.ComfyNode):
                 **values: object) -> io.NodeOutput:
         if 'base' in context:
             CPipeAny = context['base']
-        return io.NodeOutput(edit_pipe(CPipeAny, values, context['layout']))
+        descriptions = list(context['layout'])
+        for name, index in context.get('extracted', {}).items():
+            source = values.get(name)
+            values[name] = source[index] if source is not None and index < len(source) else None
+            position = int(name[4:]) - 1
+            actual_layout = getattr(source, 'layout', [])
+            if position < len(descriptions) and index < len(actual_layout) and actual_layout[index]:
+                actual = actual_layout[index]
+                declared = descriptions[position] or {}
+                candidates = [declared, *declared.get('alternatives', [])]
+                match = next((field for field in candidates
+                              if field.get('label') == actual['label']
+                              and str(field.get('type')) == str(actual['type'])), None)
+                descriptions[position] = dict(actual)
+                if match and 'occurrence' in match:
+                    descriptions[position]['occurrence'] = match['occurrence']
+        return io.NodeOutput(edit_pipe(CPipeAny, values, descriptions))
 
 
 class CPipeFromAny(io.ComfyNode):

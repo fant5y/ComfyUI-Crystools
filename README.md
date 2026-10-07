@@ -383,18 +383,23 @@ reroutes, chained pipes and native subgraph boundaries. An edit replaces its val
 at that position; disconnecting it restores the inherited value and label.
 
 The pipe output uses the smallest enclosing canvas group's title. Outside groups,
-it retains its previous output label.
+an explicit local label wins; otherwise intermediate pipes inherit the upstream
+bundle name. Shared subgraphs display names for the instance currently opened.
 
 When several pipes feed **Switch Any (Auto)**, the first-connected pipe supplies
 the template, regardless of its muted/bypassed state. Empty input slots on sibling
 pipes inherit its labels and colors. Connected slots keep their actual source
 identity. The template's order stays fixed when another branch is activated;
-fields unique to other branches are appended to the common layout.
+fields unique to other branches are appended to the common layout. Template names
+travel through intermediate extractors, editors, reroutes and nested switches.
+A nearer switch supplies its local template; outer templates fill remaining gaps.
+An already connected field is not duplicated just to fill a template hint.
 
 For example, MODEL may occupy slot 1 on one pipe and slot 3 on another: the switch
 matches its source label and type and routes the selected MODEL to the same
 extraction output. Repeated identical labels/types are matched in occurrence
-order. Give semantically different values distinct source output labels when
+order, including empty occurrences. An empty middle IMAGE does not move the next
+IMAGE into its place. Give semantically different values distinct source output labels when
 both their label and type would otherwise be identical.
 
 An empty whole pipe can be skipped by the automatic switch. Extracting an absent
@@ -402,6 +407,12 @@ or empty field into another **Pipe to/edit any** leaves that edit input unused:
 the inherited value stays in place, or the slot remains empty if it had no value.
 Other fields and later overrides continue through the pipe without extra switch
 nodes. Values never shift to fill an empty slot.
+
+When an edit can retain a differently named field, the switch reserves both
+identities and routes the actual value to the corresponding output. Before the
+switch, an extractor shows both possible names separated by `/`; if their types
+differ, its socket remains a wildcard. Empty overrides retain their original
+identity through extraction and repacking.
 
 Extracted empty fields return ordinary `None`, allowing nodes such as If None
 to inspect them. False, zero and nonempty tensors remain valid values.

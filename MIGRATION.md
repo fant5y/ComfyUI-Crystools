@@ -152,6 +152,44 @@ Targets: ComfyUI **0.38.0** and ComfyUI_frontend **1.53.10**.
   Unnamed direct API pipes retain positional behavior. No model-specific fields
   or input selectors are introduced.
 
+## Complete pipe handovers
+
+Field metadata now includes an optional explicit `occurrence` and per-slot
+`alternatives`. Existing layouts without these fields remain readable. Empty
+slots reserve duplicate identities; retained overrides keep the actual inherited
+identity. Direct extraction/edit handovers carry the whole source pipe internally
+so runtime fallback metadata survives repacking. User-facing field outputs still
+return ordinary None, and existing socket indices and server keys are unchanged.
+
+Switch canonical layouts include primary and fallback identities without
+enumerating payload combinations. The union is checked against the 100-field
+limit before display. Ambiguous extracted types use wildcard sockets; alternative
+names are displayed together before canonical switch alignment.
+
+The frontend traces complete pipe ancestry through editors, extractors, automatic
+switches, reroutes and native boundaries. Both node and input-boundary cycle keys
+include host instance paths. Template hints are resolved recursively and serialized
+per instance. Nearest-switch templates take precedence; equal-distance competing
+owners use stable instance-ID order. Connected descriptions win, and hints do not
+introduce a duplicate identity already connected elsewhere in the same pipe.
+
+Whole-pipe names use group, explicit local label, inherited name, then CPipeAny.
+Active shared-definition display uses the pinned frontend canvas's public
+`subgraph-opened` event and its `fromNode`; every instance still receives its own
+serialized execution layout. Static labels on ordinary scalar switches describe
+visible graph sources and mode flags; runtime None fallback from arbitrary scalar
+processing nodes cannot reveal a different source name without runtime metadata.
+
+Run the committed frontend regression harness with
+`node --experimental-vm-modules tests/pipe_handover.cjs`. It covers serial shared
+instances, active inner context, indirect templates, nested precedence, duplicate
+reservations, wildcard alternatives, rename propagation and capacity rejection.
+A 40-editor chain measured about 20-30 ms per refresh in the isolated harness;
+no additional cache was introduced. Adjacent pinned V3 fixtures also checked
+frontend-generated layouts against actual runtime alignment and extraction,
+first/middle/last/all missing duplicate fields, False/zero and optional-reference
+processing. Full live workflow acceptance remains necessary before merging.
+
 ## Validation
 
 - `npm ci` and `npm run validate`: TypeScript compilation and ESLint passed.
