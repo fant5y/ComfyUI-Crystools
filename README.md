@@ -609,7 +609,10 @@ as connections are made, up to 100. It accepts any value type, including pipes.
 - Keep `False`, `0` and black images as valid values.
 - Skip sources that were muted or bypassed in the submitted workflow, including
   across native subgraph boundaries.
-- If nothing is available, silently stop the downstream path.
+- Evaluate candidates lazily in input order; stop requesting branches once a
+  usable value is found. Muted/bypassed branches are not requested.
+- If nothing is available, return ordinary `None` so a following switch or
+  availability check can still execute.
 - Show the first non-muted/non-bypassed input's label and color on the output,
   updating when branch modes change. Use a specific socket type when connected
   branches agree; otherwise keep a wildcard output. The label reflects graph
@@ -622,11 +625,15 @@ template survives workflow reloads and activation changes; disconnecting it
 promotes the next remaining connection. Older workflows without saved connection
 order initialize the template from input slot order.
 
-Connected active branches are evaluated before selection. This node does not
-lazily execute one candidate at a time, swallow upstream errors, or override
-ComfyUI's propagation of native execution blockers from other nodes. Empty pipe
-extractions return `None` and can be skipped by this switch. Use whole-pipe
-switching when choosing between model branches.
+This is a standalone switch for images, models, conditioning, text, numbers or
+any other value; pipes are optional. A usable fallback passes through without
+running later branches. An evaluated empty input advances selection to the next
+candidate. Independently requested output nodes can still run those branches.
+
+The switch does not swallow errors from a candidate it actually needs to evaluate,
+or override native execution blockers emitted by other nodes. If every candidate
+is empty, consumers requiring a real image/model still need a valid source;
+returning None lets None-aware consumers and downstream fallback switches run.
 
 The node identifier is `CSWITCH_ANY_AUTO`. Workflows made with the early
 `First available any` prototype need that node replaced with **Switch Any (Auto)**.

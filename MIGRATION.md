@@ -78,7 +78,7 @@ Targets: ComfyUI **0.38.0** and ComfyUI_frontend **1.53.10**.
   label and value. Output link types track the resolved source type.
 - Refresh after creation, workflow loading and connection changes, with a cycle
   guard. Existing callbacks are preserved. Additional output positions return
-  silent execution blockers when absent, without changing the compact pipe payload.
+  ordinary None when absent, without changing the compact pipe payload.
 
 ## Switch Any (Auto)
 
@@ -89,14 +89,20 @@ Targets: ComfyUI **0.38.0** and ComfyUI_frontend **1.53.10**.
   strings, empty built-in containers/bytes and tensors with no elements.
   False, zero and black images are valid values; tensor truth testing is avoided.
 - Preserve ComfyUI list execution streams and opaque values. If every input is
-  unavailable, return a silent execution blocker to stop downstream nodes.
+  unavailable, return ordinary None; downstream fallback switches and availability
+  checks continue to execute.
 - Use the submitted workflow and the native hidden execution ID to skip sources
   originally muted/bypassed, including subgraph boundaries. This matters because
   the frontend may rewire a bypassed node to its upstream input. No workflow
   metadata is required for ordinary None/empty selection through direct API use.
-- Connected active branches are evaluated before selection; this node does not
-  lazily execute one candidate at a time. Normal ComfyUI execution blockers and
-  upstream errors still propagate according to the engine's execution rules.
+- All candidate inputs use native V3 lazy evaluation. `check_lazy_status` requests
+  only the first enabled unresolved candidate, proceeding to the next after a
+  resolved empty result and stopping once a usable result exists. The pinned
+  list-input API distinguishes unresolved `(None,)` from resolved `[None]`;
+  no persistent state, execution-cache inspection or core patches are needed.
+  Keep mute/bypass ancestry cycle checks distinct for serial shared instances.
+  Errors from requested candidates and native blockers from other nodes retain
+  the engine's behavior. This selection works independently of pipe nodes.
 - When all connected candidates are pipes, expose a CPipeAny output and propagate
   a common field layout through the switch, downstream extraction/edit pipes,
   reroutes and native subgraphs. Keep the first connected branch's slot order,
@@ -198,7 +204,7 @@ processing. Full live workflow acceptance remains necessary before merging.
   confirmed input order/types/defaults, output types/names, categories,
   list flags and output-node flags.
 - First-available checks covered None/empty inputs, False/zero, empty tensors,
-  list streams, silent all-empty output and muted/bypassed sources in root and
+  list streams, queryable all-empty output and muted/bypassed sources in root and
   subgraph workflows. The real 0.38.0 execution mapper/merger passed selection
   and all-empty checks with native V3 class locking.
 - Pipe checks covered 100-value execution, sparse slots, non-mutating edits,
@@ -240,7 +246,16 @@ ComfyUI server/frontend were not available for a full live-session test.
 The validation harnesses and pinned upstream source fixtures are in the
 adjacent work directory; they are not production dependencies.
 
+Standalone lazy-switch fixtures use the actual 0.38.0 input resolver and mapper.
+They verify that unresolved and resolved None are distinguished, unused branches
+that would raise are never requested, muted/bypassed sources are skipped, False
+and zero remain valid, and an empty switch followed by a usable fallback executes.
+These fixtures do not replace a live server test.
+
 ## References
+
+- [ComfyUI lazy evaluation](https://docs.comfy.org/custom-nodes/backend/lazy_evaluation)
+- [rgthree Any Switch reference behavior](https://github.com/rgthree/rgthree-comfy/blob/main/py/any_switch.py)
 
 - [ComfyUI 0.38.0 node loader](https://github.com/Comfy-Org/ComfyUI/blob/v0.38.0/nodes.py)
 - [ComfyUI 0.38.0 native V3 API](https://github.com/Comfy-Org/ComfyUI/blob/v0.38.0/comfy_api/latest/_io.py)
