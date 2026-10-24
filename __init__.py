@@ -16,7 +16,7 @@ from .nodes.primitive import CBoolean, CText, CTextML, CInteger, CFloat
 from .nodes.switch import CSwitchBooleanAny, CSwitchBooleanLatent, CSwitchBooleanConditioning, CSwitchBooleanImage, \
   CSwitchBooleanString, CSwitchBooleanMask, CSwitchFromAny
 from .nodes.swich_any_auto import CSwitchAnyAuto
-from .nodes.switch_if_empty import CSwitchAnyIfEmpty
+from .nodes.switch_if_empty import CSwitchAnyIfEmpty, CSwitchAnyIfEmptyProbe
 from .core.optional import install_optional_input_hook
 from .nodes.debugger import CConsoleAny, CConsoleAnyToJson
 from .nodes.image import CImagePreviewFromImage, CImageLoadWithMetadata, CImageGetResolution, CImagePreviewFromMetadata, \
@@ -46,6 +46,7 @@ class CrystoolsExtension(ComfyExtension):
             CListString,
             CSwitchAnyAuto,
             CSwitchAnyIfEmpty,
+            CSwitchAnyIfEmptyProbe,
             CSwitchFromAny,
             CSwitchBooleanAny,
             CSwitchBooleanLatent,

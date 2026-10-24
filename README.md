@@ -612,8 +612,8 @@ of whether the selected branch is connected. The value remains at output slot 0.
 Choose `empty_action` to control an empty selected branch:
 
 - `omit` (the existing default): omit the receiving optional argument.
-- `bypass`: skip the receiving node's processing function and route compatible
-  inputs to its outputs. This also accepts a required receiving input.
+- `bypass`: set nodes directly connected to `any` to native purple bypass
+  (mode 4) when the selected branch is absent.
 
 In `omit` mode, an unconnected selected branch, or a selected branch returning `None`, emits
 Crystools' explicit `EMPTY` marker. Crystools omits that argument from the
@@ -624,19 +624,26 @@ image passes through, while `None` makes the receiver run without that argument.
 The reverse arrangement works too. This does not emit an ExecutionBlocker.
 
 For automatic bypass, use that same wiring and set `empty_action` to `bypass`.
-The receiver's function is skipped when the selected branch is absent. Outputs
-prefer an input at the same position with a compatible declared type, then an
-exact type match, then the first compatible input. Outputs without a usable
-input carry the bypass marker onward. Thus an absent image can travel through
-an IMAGE-to-LATENT step, then bypass reference conditioning by passing its
-original CONDITIONING input through. A terminal output node receives no call
-when bypassed. Connections remain visible throughout.
+When you click Run, the frontend first submits checks containing each relevant
+switch and its ancestors, upstream first. This executes upstream nodes on your configured device
+and uses ComfyUI's cache where available. It can add execution time or repeat
+upstream work when caching is disabled. It does not force CPU mode.
+After the check, only directly connected receivers become purple. The frontend
+then serializes and submits the main workflow using ComfyUI's normal bypass
+routing. Downstream nodes retain their modes; there is no propagating bypass
+marker or ExecutionBlocker. The `is_empty` output does not control receivers.
+If bypass removes the last requested output, no main job is submitted.
 
-Routing uses declared types and schema order, not the meaning of an input name.
-Nodes with several compatible inputs may therefore need explicit switching to
-choose a different route. This runtime rule is not identical to every frontend
-bypass case. Eager upstream dependencies can still execute before a receiver is
-bypassed; this does not prevent upstream errors or cancel that upstream work.
+On the next Run, this extension restores modes that it previously changed and
+checks again. Manually bypassed or muted nodes are left alone. This requires the
+frontend extension: API-only submissions cannot set canvas modes. Reload the
+browser after updating, as well as restarting ComfyUI.
+
+Native bypass still requires compatible routes and a valid resulting workflow.
+It does not fabricate a value for a downstream required input. A failed check
+or an input change during the check prevents submission of the main workflow.
+The decision uses the checked values. Always-rerun or non-deterministic upstream
+nodes can produce different values if they execute again in the main job.
 
 Empty checks include `None`, whitespace-only strings, empty containers/bytes,
 zero-element tensors and wholly empty Crystools pipes. `0` and `False` remain
@@ -651,14 +658,14 @@ requesting an already omitted input again. Restart ComfyUI after installation.
 
 Limits for `omit`: the receiver must actually support an absent optional argument.
 Inputs declared required are rejected with an explanatory error. Raw-link inputs
-are left untouched. A single execution stream mixing either marker with actual
-values is rejected to preserve sample alignment; wholly empty streams omit the
-argument or bypass the receiver according to the selected mode.
+are left untouched. A single execution stream mixing the empty marker with
+actual values is rejected to preserve sample alignment. Native bypass requires
+one consistent empty-branch decision across the switch's execution stream.
 Upstream errors and execution blockers cannot be recovered by this node.
 An absent optional argument whose Python default is itself `None` still uses
 that default; this does not repair bugs in the receiver's disconnected behavior.
 
-The new runtime-bypass cases have been written but have not been executed.
+The native-bypass changes have not been executed or tested in ComfyUI.
 The integration suite below imports an installed ComfyUI and uses CPU mode;
 run it only with explicit permission:
 `python tests/optional_switch.py --comfy-root K:/`.
