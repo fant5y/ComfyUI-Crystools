@@ -88,6 +88,41 @@ class OptionalInputs(unittest.TestCase):
         self.assertEqual(self.invoke([0, False, 'text']), [(0,), (False,), ('text',)])
         self.assertEqual(self.invoke([self.module.EMPTY] * 3), [('default',)])
 
+    def test_autogrow_omission_matches_disconnected_socket(self):
+        class AutogrowReceiver(io.ComfyNode):
+            @classmethod
+            def define_schema(cls):
+                return io.Schema(
+                    node_id='TestAutogrowOptionalReceiver',
+                    inputs=[io.Autogrow.Input('images', template=io.Autogrow.TemplatePrefix(
+                        io.AnyType.Input('image'), prefix='image', min=0, max=3))],
+                    outputs=[io.AnyType.Output()])
+
+            @classmethod
+            def execute(cls, images):
+                return io.NodeOutput(images)
+
+        for remaining in ({}, {'images.image0': 'present'}):
+            for value in (self.module.EMPTY, None):
+                with self.subTest(remaining=remaining, value=value):
+                    inputs = {**remaining, 'images.image1': ['source', 0]}
+                    cache = SimpleNamespace(get_cache=lambda *_: SimpleNamespace(outputs=[[value]]))
+                    data, _, metadata = execution.get_input_data(
+                        inputs, AutogrowReceiver, 'receiver', cache)
+                    disconnected = remaining if value is self.module.EMPTY else inputs
+                    _, _, expected_metadata = execution._io.get_finalized_class_inputs(
+                        AutogrowReceiver.INPUT_TYPES(), disconnected)
+                    expected_values = remaining if value is self.module.EMPTY else {
+                        **remaining, 'images.image1': None}
+                    expected = execution._io.build_nested_inputs(expected_values, expected_metadata)
+
+                    async def run():
+                        results = await execution._async_map_node_over_list(
+                            'test', 'receiver', AutogrowReceiver, data, 'execute', v3_data=metadata)
+                        return await execution.resolve_map_node_over_list_results(results)
+
+                    self.assertEqual(asyncio.run(run())[0][0], expected['images'])
+
     def test_required_and_mixed_streams_are_rejected(self):
         class Required(Receiver):
             @classmethod

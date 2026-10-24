@@ -44,6 +44,17 @@ def install_optional_input_hook() -> None:
             del data[name]
             missing.pop(name, None)
             metadata.setdefault(_OMITTED, set()).add(name)
+        omitted = metadata.get(_OMITTED, ())
+        if omitted and issubclass(class_def, execution._ComfyNodeInternal):
+            # V3 rebuilds missing dynamic leaves as None using these paths.
+            # Finalize as if the marked sockets were disconnected, including
+            # native defaults for an entirely empty Autogrow group.
+            _, _, dynamic_metadata = execution._io.get_finalized_class_inputs(
+                class_def.INPUT_TYPES(),
+                {name: value for name, value in inputs.items() if name not in omitted})
+            for name in ('dynamic_paths', 'dynamic_paths_default_value', 'list_paths'):
+                metadata.pop(name, None)
+            metadata.update(dynamic_metadata)
         return data, missing, metadata
 
     @wraps(original_mapper)
