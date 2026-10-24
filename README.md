@@ -598,6 +598,44 @@ You have predefined switches (string, latent, image, conditioning) but you can u
 
 **Sample:** [switch.json](./samples/switch.json)
 
+### Node: Switch Any (If Empty)
+
+**Switch Any (If Empty)** (`CSWITCH_ANY_IF_EMPTY`) combines an emptiness check
+and a lazy switch for any value type. Connect the value to check to `value`.
+It selects `on_true` when that value is empty, otherwise `on_false`.
+Both branches are optional; either one, or both, may remain disconnected.
+Only the selected branch is requested from upstream.
+
+An unconnected selected branch, or a selected branch returning `None`, emits
+Crystools' explicit `EMPTY` marker. Crystools omits that argument from the
+receiving node's **optional** inputs, allowing its normal Python default to
+apply. The canvas connection stays in place. For example, connect an optional
+image to both `value` and `on_false`, leaving `on_true` disconnected: a real
+image passes through, while `None` makes the receiver run without that argument.
+The reverse arrangement works too. This does not emit an ExecutionBlocker.
+
+Empty checks include `None`, whitespace-only strings, empty containers/bytes,
+zero-element tensors and wholly empty Crystools pipes. `0` and `False` remain
+valid unless `zero_is_empty` is enabled. Other selected values pass through
+unchanged. A missing `value` is treated as empty, including when chaining these
+nodes. Existing switches and ordinary `None` handling elsewhere are unchanged.
+
+This uses in-memory wrappers around ComfyUI's private `get_input_data` and
+`_async_map_node_over_list` functions, installed when Crystools loads; no ComfyUI
+files are modified. The second wrapper prevents optional lazy receivers from
+requesting an already omitted input again. Restart ComfyUI after installation.
+
+Limits: the receiver must actually support an absent optional argument. Inputs
+declared required are rejected with an explanatory error. Raw-link inputs are
+left untouched. A single execution stream mixing `EMPTY` and actual values is
+rejected to preserve sample alignment; wholly empty streams omit the argument.
+Upstream errors and execution blockers cannot be recovered by this node.
+An absent optional argument whose Python default is itself `None` still uses
+that default; this does not repair bugs in the receiver's disconnected behavior.
+
+CPU integration checks against an installed ComfyUI:
+`python tests/optional_switch.py --comfy-root K:/`.
+
 ### Node: Switch Any (Auto)
 
 **Switch Any (Auto)** selects the first usable connected input from top to bottom,

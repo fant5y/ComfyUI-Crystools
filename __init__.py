@@ -16,6 +16,8 @@ from .nodes.primitive import CBoolean, CText, CTextML, CInteger, CFloat
 from .nodes.switch import CSwitchBooleanAny, CSwitchBooleanLatent, CSwitchBooleanConditioning, CSwitchBooleanImage, \
   CSwitchBooleanString, CSwitchBooleanMask, CSwitchFromAny
 from .nodes.swich_any_auto import CSwitchAnyAuto
+from .nodes.switch_if_empty import CSwitchAnyIfEmpty
+from .core.optional import install_optional_input_hook
 from .nodes.debugger import CConsoleAny, CConsoleAnyToJson
 from .nodes.image import CImagePreviewFromImage, CImageLoadWithMetadata, CImageGetResolution, CImagePreviewFromMetadata, \
     CImageSaveWithExtraMetadata
@@ -28,6 +30,9 @@ from .server import *
 from .general import *
 
 class CrystoolsExtension(ComfyExtension):
+    async def on_load(self) -> None:
+        install_optional_input_hook()
+
     async def get_node_list(self) -> list[type[io.ComfyNode]]:
         return [
             CBoolean,
@@ -40,6 +45,7 @@ class CrystoolsExtension(ComfyExtension):
             CListAny,
             CListString,
             CSwitchAnyAuto,
+            CSwitchAnyIfEmpty,
             CSwitchFromAny,
             CSwitchBooleanAny,
             CSwitchBooleanLatent,

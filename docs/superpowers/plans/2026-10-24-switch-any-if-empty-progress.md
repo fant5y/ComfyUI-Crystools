@@ -1,0 +1,15 @@
+# Implementation ledger
+
+- Existing linked worktree is isolated; branch `codex/switch-any-if-empty`.
+- Baseline frontend tests passed before changes.
+- Task 1 RED: real CPU executor tests failed on missing core.optional; GREEN: six tests passed.
+- Task 2 RED: selection tests failed on missing nodes.switch_if_empty before implementation.
+- Ruling: also wrap the native async mapper to remove lazy requests for already omitted arguments. Removing only get_input_data keys lets receivers request them forever. The wrapper only changes check_lazy_status results for explicitly marked inputs; other calls use native results.
+- Ruling: make checked value optional so omitted EMPTY from another switch can be checked as empty without requiring a fake source.
+- No installed files or ComfyUI source files changed.
+- Task 2 GREEN: schema/selection tests, real validated scheduler runs in both directions, selected None and nonempty values, unselected failing branches, cached EMPTY, input lists, and V3 hidden metadata passed (11 tests before review fixes).
+- Independent fresh reviewer: no critical/important findings; minor undeclared-input error message bug reproduced RED and corrected.
+- Additional RED: pickle round-trip lost marker identity. Replaced plain singleton with Enum singleton so serialized cache values retain identity.
+- Existing frontend pipe regression script passed after implementation (40-editor refresh 41 ms).
+- Final verification: all 13 CPU tests passed, including both reproduced review/serialization failures. Diff check passed with cr-at-eol (the repository's existing __init__.py uses CRLF).
+- Finishing: keep isolated branch and worktree for review; no push, merge, installation or publication, as specified in approved scope.
