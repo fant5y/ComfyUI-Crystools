@@ -22,7 +22,8 @@ function ancestorPrompt(output, ids, replaceSwitches = true) {
         if (result[id]) return;
         const entry = output[id];
         if (!entry) throw new Error(`Crystools bypass: missing upstream node ${id}`);
-        result[id] = structuredClone(entry);
+        // Only class_type changes. Inputs may contain frontend reactive proxies.
+        result[id] = { ...entry };
         for (const value of Object.values(entry.inputs)) {
             if (Array.isArray(value) && value.length === 2 &&
                 typeof value[0] === 'string' && Number.isInteger(value[1]) && output[value[0]]) {

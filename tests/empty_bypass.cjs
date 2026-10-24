@@ -9,7 +9,7 @@ const { test } = require('node:test');
 const SWITCH = 'CSWITCH_ANY_IF_EMPTY';
 const PROBE = 'CSWITCH_ANY_IF_EMPTY_PROBE';
 
-async function fixture({ empty = true, fail = false, terminal = false } = {}) {
+async function fixture({ empty = true, fail = false, terminal = false, proxied = false } = {}) {
     let extension;
     const submissions = [];
     const graph = { _nodes: [], links: new Map(), setDirtyCanvas() {},
@@ -40,13 +40,18 @@ async function fixture({ empty = true, fail = false, terminal = false } = {}) {
                 // Model native same-type bypass for this fixture's Batch.
                 if (value === downstream && receiver.mode === 4) inputs.image = ['2', 0];
                 output[value.id] = { class_type: value.comfyClass, inputs };
+                if (proxied) {
+                    inputs.settings = new Proxy({ enabled: true }, {});
+                    output[value.id] = new Proxy(output[value.id], {});
+                }
             }
             return { output, workflow: {} };
         },
     };
     const api = {
         async queuePrompt(number, data, options) {
-            submissions.push({ number, data: structuredClone(data), options });
+            // Match the real API's JSON transport, which accepts reactive proxies.
+            submissions.push({ number, data: JSON.parse(JSON.stringify(data)), options });
             return { prompt_id: `job-${submissions.length}`, node_errors: {} };
         },
         async fetchApi(url) {
@@ -96,6 +101,17 @@ test('nonempty selected branch leaves receiver active', async () => {
     await f.run();
     assert.equal(f.receiver.mode, 0);
     assert.equal(f.submissions.at(-1).data.output['3'].class_type, 'Batch');
+});
+
+test('JSON-compatible proxy entries and nested inputs do not prevent native bypass', async () => {
+    const f = await fixture({ proxied: true });
+    await f.run();
+    assert.equal(f.receiver.mode, 4);
+    assert.equal(f.downstream.mode, 0);
+    assert.equal(f.submissions.length, 2);
+    assert.equal(f.submissions[0].data.output['2'].class_type, PROBE);
+    assert.equal(f.submissions[1].data.output['2'].class_type, SWITCH);
+    assert.deepEqual(f.submissions[0].data.output['2'].inputs.settings, { enabled: true });
 });
 
 test('omit mode does not submit a preflight', async () => {
