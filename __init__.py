@@ -15,7 +15,7 @@ logger.info(f'Crystools version: {version}')
 from .nodes.primitive import CBoolean, CText, CTextML, CInteger, CFloat
 from .nodes.switch import CSwitchBooleanAny, CSwitchBooleanLatent, CSwitchBooleanConditioning, CSwitchBooleanImage, \
   CSwitchBooleanString, CSwitchBooleanMask, CSwitchFromAny
-from .nodes.first_available import CSwitchAnyAuto
+from .nodes.swich_any_auto import CSwitchAnyAuto
 from .nodes.debugger import CConsoleAny, CConsoleAnyToJson
 from .nodes.image import CImagePreviewFromImage, CImageLoadWithMetadata, CImageGetResolution, CImagePreviewFromMetadata, \
     CImageSaveWithExtraMetadata
