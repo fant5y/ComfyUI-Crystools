@@ -78,7 +78,7 @@ Targets: ComfyUI **0.38.0** and ComfyUI_frontend **1.53.10**.
   label and value. Output link types track the resolved source type.
 - Refresh after creation, workflow loading and connection changes, with a cycle
   guard. Existing callbacks are preserved. Additional output positions return
-  silent execution blockers when absent, without changing the compact pipe payload.
+  ordinary None when absent, without changing the compact pipe payload.
 
 ## Switch Any (Auto)
 
@@ -89,14 +89,20 @@ Targets: ComfyUI **0.38.0** and ComfyUI_frontend **1.53.10**.
   strings, empty built-in containers/bytes and tensors with no elements.
   False, zero and black images are valid values; tensor truth testing is avoided.
 - Preserve ComfyUI list execution streams and opaque values. If every input is
-  unavailable, return a silent execution blocker to stop downstream nodes.
+  unavailable, return ordinary None; downstream fallback switches and availability
+  checks continue to execute.
 - Use the submitted workflow and the native hidden execution ID to skip sources
   originally muted/bypassed, including subgraph boundaries. This matters because
   the frontend may rewire a bypassed node to its upstream input. No workflow
   metadata is required for ordinary None/empty selection through direct API use.
-- Connected active branches are evaluated before selection; this node does not
-  lazily execute one candidate at a time. Normal ComfyUI execution blockers and
-  upstream errors still propagate according to the engine's execution rules.
+- All candidate inputs use native V3 lazy evaluation. `check_lazy_status` requests
+  only the first enabled unresolved candidate, proceeding to the next after a
+  resolved empty result and stopping once a usable result exists. The pinned
+  list-input API distinguishes unresolved `(None,)` from resolved `[None]`;
+  no persistent state, execution-cache inspection or core patches are needed.
+  Keep mute/bypass ancestry cycle checks distinct for serial shared instances.
+  Errors from requested candidates and native blockers from other nodes retain
+  the engine's behavior. This selection works independently of pipe nodes.
 - When all connected candidates are pipes, expose a CPipeAny output and propagate
   a common field layout through the switch, downstream extraction/edit pipes,
   reroutes and native subgraphs. Keep the first connected branch's slot order,
@@ -128,11 +134,22 @@ Targets: ComfyUI **0.38.0** and ComfyUI_frontend **1.53.10**.
 - Treat a PipeValues payload containing only unavailable values as empty, so an
   automatic switch can fall through to another pipe. Keep whole empty pipe
   payloads as pipe values rather than upstream execution blockers, which would
-  prevent the switch from checking alternatives. Extraction emits silent native
-  execution blockers for missing/empty fields and accepts a None pipe safely.
-  False, zero and nonempty tensors remain valid. A blocked field stops its
-  dependent path, even when connected to an optional socket; native blockers
-  entering a switch still propagate under the engine's rules.
+  prevent the switch from checking alternatives. Extraction returns ordinary
+  None for missing/empty fields and accepts a None pipe safely. False, zero and
+  nonempty tensors remain valid. None-aware consumers can execute their checks;
+  unrelated native execution blockers still propagate under the engine's rules.
+- Preserve pipe editing across missing direct and indirect overrides. Pipe to/edit
+  any uses native lazy raw links and graph expansion. Before requesting a computed
+  override, inspect its required typed dependencies on Pipe from any fields using
+  the native prompt and registered node input schemas. A dev-only guard reads
+  intact whole-pipe payloads and excludes overrides with missing required fields;
+  a dev-only editor applies available overrides, retaining inherited values and
+  slot positions. Wildcard checks, optional fields and lazy/raw inputs do not
+  directly require a field to exist. Do not traverse into other pipe editors.
+  No user-added helper nodes, core monkeypatches or execution-cache access are
+  required. Independently requested output branches and ordinary consumers keep
+  their own missing-value handling; this does not turn every None into a missing
+  connection or prevent unrelated upstream exceptions.
 - Store layouts in native serialized node properties, including layouts for each
   instance of a shared subgraph. Pipe creation and automatic selection use native
   fingerprint invalidation because hidden workflow metadata is excluded from the
@@ -141,15 +158,53 @@ Targets: ComfyUI **0.38.0** and ComfyUI_frontend **1.53.10**.
   Unnamed direct API pipes retain positional behavior. No model-specific fields
   or input selectors are introduced.
 
+## Complete pipe handovers
+
+Field metadata now includes an optional explicit `occurrence` and per-slot
+`alternatives`. Existing layouts without these fields remain readable. Empty
+slots reserve duplicate identities; retained overrides keep the actual inherited
+identity. Direct extraction/edit handovers carry the whole source pipe internally
+so runtime fallback metadata survives repacking. User-facing field outputs still
+return ordinary None, and existing socket indices and server keys are unchanged.
+
+Switch canonical layouts include primary and fallback identities without
+enumerating payload combinations. The union is checked against the 100-field
+limit before display. Ambiguous extracted types use wildcard sockets; alternative
+names are displayed together before canonical switch alignment.
+
+The frontend traces complete pipe ancestry through editors, extractors, automatic
+switches, reroutes and native boundaries. Both node and input-boundary cycle keys
+include host instance paths. Template hints are resolved recursively and serialized
+per instance. Nearest-switch templates take precedence; equal-distance competing
+owners use stable instance-ID order. Connected descriptions win, and hints do not
+introduce a duplicate identity already connected elsewhere in the same pipe.
+
+Whole-pipe names use group, explicit local label, inherited name, then CPipeAny.
+Active shared-definition display uses the pinned frontend canvas's public
+`subgraph-opened` event and its `fromNode`; every instance still receives its own
+serialized execution layout. Static labels on ordinary scalar switches describe
+visible graph sources and mode flags; runtime None fallback from arbitrary scalar
+processing nodes cannot reveal a different source name without runtime metadata.
+
+Run the committed frontend regression harness with
+`node --experimental-vm-modules tests/pipe_handover.cjs`. It covers serial shared
+instances, active inner context, indirect templates, nested precedence, duplicate
+reservations, wildcard alternatives, rename propagation and capacity rejection.
+A 40-editor chain measured about 20-30 ms per refresh in the isolated harness;
+no additional cache was introduced. Adjacent pinned V3 fixtures also checked
+frontend-generated layouts against actual runtime alignment and extraction,
+first/middle/last/all missing duplicate fields, False/zero and optional-reference
+processing. Full live workflow acceptance remains necessary before merging.
+
 ## Validation
 
 - `npm ci` and `npm run validate`: TypeScript compilation and ESLint passed.
-- All 30 native classes passed the actual ComfyUI 0.38.0 V3 class/schema
+- All 30 user-facing native classes and both pipe execution helpers passed the actual ComfyUI 0.38.0 V3 class/schema
   validator. Contract comparisons against the repository's original classes
   confirmed input order/types/defaults, output types/names, categories,
   list flags and output-node flags.
 - First-available checks covered None/empty inputs, False/zero, empty tensors,
-  list streams, silent all-empty output and muted/bypassed sources in root and
+  list streams, queryable all-empty output and muted/bypassed sources in root and
   subgraph workflows. The real 0.38.0 execution mapper/merger passed selection
   and all-empty checks with native V3 class locking.
 - Pipe checks covered 100-value execution, sparse slots, non-mutating edits,
@@ -164,7 +219,12 @@ Targets: ComfyUI **0.38.0** and ComfyUI_frontend **1.53.10**.
   order, configuration reloads, bypassed templates, connected-slot identity,
   nested groups, title changes, restoration outside groups and typed/mixed
   switch outputs. Native mapper checks verified empty-pipe fallback and that
-  consumers of absent extracted fields do not execute.
+  consumers can query absent extracted fields as None.
+- Optional-reference regression checks use the actual pinned V3 input resolver,
+  mapper and graph builder with a fixture dependency runner. Missing images do not
+  schedule scaling/encoding/reference nodes solely for pipe overrides; original
+  conditioning and other edits survive. Present images apply reference conditioning.
+  Wildcard None checks execute in both cases, including flattened subgraph IDs.
 - Active output-label checks covered input priority distinct from connection
   chronology, live mute/bypass toggles, downstream labels/colors, subgraph hosts,
   reroutes and unchanged template layouts when no branch is active.
@@ -186,10 +246,20 @@ ComfyUI server/frontend were not available for a full live-session test.
 The validation harnesses and pinned upstream source fixtures are in the
 adjacent work directory; they are not production dependencies.
 
+Standalone lazy-switch fixtures use the actual 0.38.0 input resolver and mapper.
+They verify that unresolved and resolved None are distinguished, unused branches
+that would raise are never requested, muted/bypassed sources are skipped, False
+and zero remain valid, and an empty switch followed by a usable fallback executes.
+These fixtures do not replace a live server test.
+
 ## References
+
+- [ComfyUI lazy evaluation](https://docs.comfy.org/custom-nodes/backend/lazy_evaluation)
+- [rgthree Any Switch reference behavior](https://github.com/rgthree/rgthree-comfy/blob/main/py/any_switch.py)
 
 - [ComfyUI 0.38.0 node loader](https://github.com/Comfy-Org/ComfyUI/blob/v0.38.0/nodes.py)
 - [ComfyUI 0.38.0 native V3 API](https://github.com/Comfy-Org/ComfyUI/blob/v0.38.0/comfy_api/latest/_io.py)
+- [ComfyUI 0.38.0 graph expansion](https://github.com/Comfy-Org/ComfyUI/blob/v0.38.0/comfy_execution/graph_utils.py)
 - [Frontend 1.53.10 extension interfaces](https://github.com/Comfy-Org/ComfyUI_frontend/blob/v1.53.10/src/types/extensionTypes.ts)
 - [Frontend 1.53.10 extension registration](https://github.com/Comfy-Org/ComfyUI_frontend/blob/v1.53.10/src/services/extensionService.ts)
 - [Frontend 1.53.10 settings API](https://github.com/Comfy-Org/ComfyUI_frontend/blob/v1.53.10/src/scripts/ui/settings.ts)

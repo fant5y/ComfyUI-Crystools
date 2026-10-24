@@ -1,5 +1,4 @@
 from comfy_api.latest import io
-from comfy_execution.graph_utils import ExecutionBlocker
 
 from ..core import CATEGORY
 from ..core.pipe import align_pipe, empty_value, pipe_layout
@@ -22,9 +21,9 @@ def _link(graph: dict, link_id: object) -> tuple[object, int] | None:
 
 def _active_source(
     graph: dict, link_id: object, definitions: dict[str, dict],
-    parents: list[tuple[dict, dict]], visited: set[tuple[int, str]],
+    parents: list[tuple[dict, dict]], visited: set[tuple[tuple[str, ...], int, str]],
 ) -> bool:
-    key = (id(graph), str(link_id))
+    key = (tuple(str(host['id']) for _, host in parents), id(graph), str(link_id))
     if key in visited:
         return False
     visited = visited | {key}
@@ -67,7 +66,7 @@ class CSwitchAnyAuto(io.ComfyNode):
             display_name=CLASSES.CSWITCH_ANY_AUTO_DESC.value,
             category=CATEGORY.MAIN.value + CATEGORY.SWITCH.value,
             description='Return the first non-empty input from top to bottom. Skip muted and bypassed sources.',
-            inputs=[io.AnyType.Input(f'any_{index}', optional=True) for index in range(1, 101)],
+            inputs=[io.AnyType.Input(f'any_{index}', optional=True, lazy=True) for index in range(1, 101)],
             outputs=[io.AnyType.Output(display_name='any', is_output_list=True)],
             is_input_list=True,
             hidden=[io.Hidden.unique_id, io.Hidden.extra_pnginfo],
@@ -96,6 +95,23 @@ class CSwitchAnyAuto(io.ComfyNode):
         }
 
     @classmethod
+    def check_lazy_status(cls, **values: list[object] | tuple[None]) -> list[str]:
+        enabled = cls._enabled_inputs()
+        for index in range(1, 101):
+            name = f'any_{index}'
+            if name not in values or not enabled.get(name, True):
+                continue
+            candidates = values[name]
+            # Native list-input nodes receive (None,) for an unresolved lazy
+            # link; a resolved None arrives inside a list. Request candidates
+            # individually so an evaluated empty input advances to the next.
+            if isinstance(candidates, tuple) and len(candidates) == 1 and candidates[0] is None:
+                return [name]
+            if any(not empty_value(value) for value in candidates):
+                return []
+        return []
+
+    @classmethod
     def execute(cls, **values: list[object]) -> io.NodeOutput:
         enabled = cls._enabled_inputs()
         for index in range(1, 101):
@@ -106,4 +122,6 @@ class CSwitchAnyAuto(io.ComfyNode):
             if available:
                 layout = pipe_layout(cls.hidden)
                 return io.NodeOutput([align_pipe(value, layout) for value in available])
-        return io.NodeOutput([ExecutionBlocker(None)])
+        # An empty switch must remain inspectable and must not prevent a later
+        # switch from selecting its own usable fallback.
+        return io.NodeOutput([None])

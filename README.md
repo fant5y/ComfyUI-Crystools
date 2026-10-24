@@ -41,7 +41,8 @@ Changes in this fork:
   supplies a stable template for empty sibling slots; selected values are matched
   by label and type even when another pipe connects them in a different order.
 - Skip empty whole pipes during automatic selection. Missing extracted fields
-  silently stop their dependent execution path instead of passing `None` to it.
+  return `None` so availability checks can run; pipe edits preserve existing
+  values when an override or its required upstream pipe field is empty.
 - Isolate preview state per node, repair WebP metadata handling and make JSON-file
   changes visible without changing the file path.
 
@@ -382,25 +383,52 @@ reroutes, chained pipes and native subgraph boundaries. An edit replaces its val
 at that position; disconnecting it restores the inherited value and label.
 
 The pipe output uses the smallest enclosing canvas group's title. Outside groups,
-it retains its previous output label.
+an explicit local label wins; otherwise intermediate pipes inherit the upstream
+bundle name. Shared subgraphs display names for the instance currently opened.
 
 When several pipes feed **Switch Any (Auto)**, the first-connected pipe supplies
 the template, regardless of its muted/bypassed state. Empty input slots on sibling
 pipes inherit its labels and colors. Connected slots keep their actual source
 identity. The template's order stays fixed when another branch is activated;
-fields unique to other branches are appended to the common layout.
+fields unique to other branches are appended to the common layout. Template names
+travel through intermediate extractors, editors, reroutes and nested switches.
+A nearer switch supplies its local template; outer templates fill remaining gaps.
+An already connected field is not duplicated just to fill a template hint.
 
 For example, MODEL may occupy slot 1 on one pipe and slot 3 on another: the switch
 matches its source label and type and routes the selected MODEL to the same
 extraction output. Repeated identical labels/types are matched in occurrence
-order. Give semantically different values distinct source output labels when
+order, including empty occurrences. An empty middle IMAGE does not move the next
+IMAGE into its place. Give semantically different values distinct source output labels when
 both their label and type would otherwise be identical.
 
 An empty whole pipe can be skipped by the automatic switch. Extracting an absent
-or empty field produces a silent execution blocker: its dependent nodes do not
-run, even if the receiving socket is optional. Other available fields can still
-be used. Ordinary pipe editing remains positional; direct API pipes without
-workflow field metadata also retain positional behavior.
+or empty field into another **Pipe to/edit any** leaves that edit input unused:
+the inherited value stays in place, or the slot remains empty if it had no value.
+Other fields and later overrides continue through the pipe without extra switch
+nodes. Values never shift to fill an empty slot.
+
+When an edit can retain a differently named field, the switch reserves both
+identities and routes the actual value to the corresponding output. Before the
+switch, an extractor shows both possible names separated by `/`; if their types
+differ, its socket remains a wildcard. Empty overrides retain their original
+identity through extraction and repacking.
+
+Extracted empty fields return ordinary `None`, allowing nodes such as If None
+to inspect them. False, zero and nonempty tensors remain valid values.
+
+Pipe edits evaluate overrides lazily. If an override's upstream processing branch
+requires a typed field extracted from an empty pipe slot, the editor leaves that
+override unused and preserves the original value. For example, an absent reference
+image does not run scaling/encoding solely for a conditioning override; the
+original conditioning stays in the pipe. Wildcard checks and lazy inputs retain
+their own missing-value handling.
+
+This protection applies to branches requested by the pipe editor. Other output
+nodes can independently request those same branches, and ordinary consumers must
+handle `None` themselves. ComfyUI's subgraph input requirements remain unchanged.
+Ordinary pipe editing remains positional; direct API pipes without workflow field
+metadata also retain positional behavior.
 
 The screenshots below show the original six-slot pipes.
  
@@ -581,7 +609,10 @@ as connections are made, up to 100. It accepts any value type, including pipes.
 - Keep `False`, `0` and black images as valid values.
 - Skip sources that were muted or bypassed in the submitted workflow, including
   across native subgraph boundaries.
-- If nothing is available, silently stop the downstream path.
+- Evaluate candidates lazily in input order; stop requesting branches once a
+  usable value is found. Muted/bypassed branches are not requested.
+- If nothing is available, return ordinary `None` so a following switch or
+  availability check can still execute.
 - Show the first non-muted/non-bypassed input's label and color on the output,
   updating when branch modes change. Use a specific socket type when connected
   branches agree; otherwise keep a wildcard output. The label reflects graph
@@ -594,11 +625,15 @@ template survives workflow reloads and activation changes; disconnecting it
 promotes the next remaining connection. Older workflows without saved connection
 order initialize the template from input slot order.
 
-Connected active branches are evaluated before selection. This node does not
-lazily execute one candidate at a time, swallow upstream errors, or override
-ComfyUI's propagation of native execution blockers. In particular, a blocked
-extracted field also stops a switch receiving it; use whole-pipe switching when
-choosing between model branches.
+This is a standalone switch for images, models, conditioning, text, numbers or
+any other value; pipes are optional. A usable fallback passes through without
+running later branches. An evaluated empty input advances selection to the next
+candidate. Independently requested output nodes can still run those branches.
+
+The switch does not swallow errors from a candidate it actually needs to evaluate,
+or override native execution blockers emitted by other nodes. If every candidate
+is empty, consumers requiring a real image/model still need a valid source;
+returning None lets None-aware consumers and downstream fallback switches run.
 
 The node identifier is `CSWITCH_ANY_AUTO`. Workflows made with the early
 `First available any` prototype need that node replaced with **Switch Any (Auto)**.

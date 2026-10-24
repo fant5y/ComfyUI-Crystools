@@ -52,8 +52,8 @@ def field_keys(layout: list[dict | None]) -> list[tuple[str, str, int] | None]:
             keys.append(None)
             continue
         identity = (field['label'], str(field['type']))
-        occurrence = counts.get(identity, 0)
-        counts[identity] = occurrence + 1
+        occurrence = field.get('occurrence', counts.get(identity, 0))
+        counts[identity] = max(counts.get(identity, 0), occurrence + 1)
         keys.append((*identity, occurrence))
     return keys
 
