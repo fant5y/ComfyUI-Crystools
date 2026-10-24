@@ -609,13 +609,34 @@ The second output, `is_empty` (BOOLEAN), exposes the check result: true selects
 `on_true`, false selects `on_false`. It describes the checked `value`, regardless
 of whether the selected branch is connected. The value remains at output slot 0.
 
-An unconnected selected branch, or a selected branch returning `None`, emits
+Choose `empty_action` to control an empty selected branch:
+
+- `omit` (the existing default): omit the receiving optional argument.
+- `bypass`: skip the receiving node's processing function and route compatible
+  inputs to its outputs. This also accepts a required receiving input.
+
+In `omit` mode, an unconnected selected branch, or a selected branch returning `None`, emits
 Crystools' explicit `EMPTY` marker. Crystools omits that argument from the
 receiving node's **optional** inputs, allowing its normal Python default to
 apply. The canvas connection stays in place. For example, connect an optional
 image to both `value` and `on_false`, leaving `on_true` disconnected: a real
 image passes through, while `None` makes the receiver run without that argument.
 The reverse arrangement works too. This does not emit an ExecutionBlocker.
+
+For automatic bypass, use that same wiring and set `empty_action` to `bypass`.
+The receiver's function is skipped when the selected branch is absent. Outputs
+prefer an input at the same position with a compatible declared type, then an
+exact type match, then the first compatible input. Outputs without a usable
+input carry the bypass marker onward. Thus an absent image can travel through
+an IMAGE-to-LATENT step, then bypass reference conditioning by passing its
+original CONDITIONING input through. A terminal output node receives no call
+when bypassed. Connections remain visible throughout.
+
+Routing uses declared types and schema order, not the meaning of an input name.
+Nodes with several compatible inputs may therefore need explicit switching to
+choose a different route. This runtime rule is not identical to every frontend
+bypass case. Eager upstream dependencies can still execute before a receiver is
+bypassed; this does not prevent upstream errors or cancel that upstream work.
 
 Empty checks include `None`, whitespace-only strings, empty containers/bytes,
 zero-element tensors and wholly empty Crystools pipes. `0` and `False` remain
@@ -628,15 +649,18 @@ This uses in-memory wrappers around ComfyUI's private `get_input_data` and
 files are modified. The second wrapper prevents optional lazy receivers from
 requesting an already omitted input again. Restart ComfyUI after installation.
 
-Limits: the receiver must actually support an absent optional argument. Inputs
-declared required are rejected with an explanatory error. Raw-link inputs are
-left untouched. A single execution stream mixing `EMPTY` and actual values is
-rejected to preserve sample alignment; wholly empty streams omit the argument.
+Limits for `omit`: the receiver must actually support an absent optional argument.
+Inputs declared required are rejected with an explanatory error. Raw-link inputs
+are left untouched. A single execution stream mixing either marker with actual
+values is rejected to preserve sample alignment; wholly empty streams omit the
+argument or bypass the receiver according to the selected mode.
 Upstream errors and execution blockers cannot be recovered by this node.
 An absent optional argument whose Python default is itself `None` still uses
 that default; this does not repair bugs in the receiver's disconnected behavior.
 
-CPU integration checks against an installed ComfyUI:
+The new runtime-bypass cases have been written but have not been executed.
+The integration suite below imports an installed ComfyUI and uses CPU mode;
+run it only with explicit permission:
 `python tests/optional_switch.py --comfy-root K:/`.
 
 ### Node: Switch Any (Auto)

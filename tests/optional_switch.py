@@ -182,6 +182,159 @@ class OptionalInputs(unittest.TestCase):
         self.assertEqual(self.invoke([self.module.EMPTY], HiddenReceiver)[0][0], ('default', 'receiver'))
 
 
+class RuntimeBypass(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.module = importlib.import_module('crystools_test.core.optional')
+        cls.module.install_optional_input_hook()
+
+    def invoke(self, receiver, values, function='execute', unresolved=()):
+        inputs = {name: [name, 0] for name in (*values, *unresolved)}
+        cache = SimpleNamespace(get_cache=lambda name, *_:
+                                SimpleNamespace(outputs=[values[name]]) if name in values else None)
+        data, _, metadata = execution.get_input_data(inputs, receiver, 'receiver', cache)
+        instance = receiver if issubclass(receiver, io.ComfyNode) else receiver()
+
+        async def run():
+            results = await execution._async_map_node_over_list(
+                'bypass-test', 'receiver', instance, data, function, v3_data=metadata)
+            return await execution.resolve_map_node_over_list_results(results)
+
+        return asyncio.run(run())
+
+    def test_absent_image_chain_preserves_conditioning(self):
+        class Encode(Receiver):
+            RETURN_TYPES = ('LATENT',)
+
+            @classmethod
+            def INPUT_TYPES(cls):
+                return {'required': {'pixels': ('IMAGE',), 'vae': ('VAE',)}}
+
+            def execute(self, **kwargs):
+                raise AssertionError('Absent image must not be encoded')
+
+        class Reference(io.ComfyNode):
+            @classmethod
+            def define_schema(cls):
+                return io.Schema(node_id='TestBypassedReference',
+                                 inputs=[io.Conditioning.Input('conditioning'),
+                                         io.Latent.Input('latent', optional=True)],
+                                 outputs=[io.Conditioning.Output()])
+
+            @classmethod
+            def check_lazy_status(cls, **kwargs):
+                raise AssertionError('Bypassed receiver must not request lazy inputs')
+
+            @classmethod
+            def execute(cls, **kwargs):
+                raise AssertionError('Absent latent must bypass reference processing')
+
+        latent = self.invoke(Encode, {'pixels': [self.module.BYPASS], 'vae': [object()]})[0][0]
+        self.assertIs(latent, self.module.BYPASS)
+        conditioning = object()
+        values = {'conditioning': [conditioning], 'latent': [latent]}
+        self.assertEqual(self.invoke(Reference, values, 'check_lazy_status'), [[]])
+        self.assertIs(self.invoke(Reference, values)[0][0], conditioning)
+
+    def test_bypassed_terminal_has_no_side_effects(self):
+        class Preview(Receiver):
+            RETURN_TYPES = ()
+
+            @classmethod
+            def INPUT_TYPES(cls):
+                return {'required': {'image': ('IMAGE',)}}
+
+            def execute(self, **kwargs):
+                raise AssertionError('No image must not produce a preview')
+
+        self.assertEqual(self.invoke(Preview, {'image': [self.module.BYPASS]}), [()])
+
+    def test_bypassed_lazy_receiver_requests_only_passthrough_source(self):
+        class LazyReference(Receiver):
+            RETURN_TYPES = ('CONDITIONING',)
+
+            @classmethod
+            def INPUT_TYPES(cls):
+                return {'required': {'conditioning': ('CONDITIONING', {'lazy': True}),
+                                     'unused': ('MODEL', {'lazy': True})},
+                        'optional': {'latent': ('LATENT',)}}
+
+            def check_lazy_status(self, **kwargs):
+                raise AssertionError('Receiver lazy logic must not run during bypass')
+
+        self.assertEqual(self.invoke(
+            LazyReference, {'latent': [self.module.BYPASS]}, 'check_lazy_status',
+            unresolved=('conditioning', 'unused')), [['conditioning']])
+
+    def test_native_list_output_merge_preserves_bypass_marker(self):
+        class ListReceiver(Receiver):
+            RETURN_TYPES = ('IMAGE',)
+            OUTPUT_IS_LIST = (True,)
+
+            @classmethod
+            def INPUT_TYPES(cls):
+                return {'required': {'image': ('IMAGE',)}}
+
+        results = self.invoke(ListReceiver, {'image': [self.module.BYPASS]})
+        self.assertEqual(execution.merge_result_data(results, ListReceiver), [[self.module.BYPASS]])
+        ListReceiver.INPUT_IS_LIST = True
+        results = self.invoke(ListReceiver, {'image': [self.module.BYPASS]})
+        self.assertEqual(execution.merge_result_data(results, ListReceiver), [[self.module.BYPASS]])
+
+    def test_list_receiver_passthrough_does_not_nest_samples(self):
+        class ListReference(Receiver):
+            INPUT_IS_LIST = True
+            RETURN_TYPES = ('CONDITIONING',)
+
+            @classmethod
+            def INPUT_TYPES(cls):
+                return {'required': {'conditioning': ('CONDITIONING',)},
+                        'optional': {'latent': ('LATENT',)}}
+
+            def execute(self, **kwargs):
+                raise AssertionError('List receiver must be bypassed')
+
+        conditioning = [['sample one'], ['sample two']]
+        values = {'conditioning': conditioning, 'latent': [self.module.BYPASS]}
+        for output_is_list in (False, True):
+            ListReference.OUTPUT_IS_LIST = (output_is_list,)
+            results = self.invoke(ListReference, values)
+            merged = execution.merge_result_data(results, ListReference)
+            self.assertEqual(merged, [conditioning])
+            self.assertIs(merged[0][0], conditioning[0])
+            self.assertIs(merged[0][1], conditioning[1])
+
+    def test_unused_streams_do_not_duplicate_or_break_passthrough(self):
+        class Reference(Receiver):
+            RETURN_TYPES = ('CONDITIONING',)
+
+            @classmethod
+            def INPUT_TYPES(cls):
+                return {'required': {'conditioning': ('CONDITIONING',), 'unused': ('IMAGE',)},
+                        'optional': {'latent': ('LATENT',)}}
+
+        conditioning = object()
+        for unused in ([], ['one', 'two', 'three']):
+            results = self.invoke(Reference, {'conditioning': [conditioning],
+                                             'unused': unused, 'latent': [self.module.BYPASS]})
+            self.assertEqual(execution.merge_result_data(results, Reference), [[conditioning]])
+
+    def test_bypass_is_serializable_and_mixed_streams_reject(self):
+        self.assertIs(pickle.loads(pickle.dumps(self.module.BYPASS)), self.module.BYPASS)
+        self.assertIs(copy.deepcopy(self.module.BYPASS), self.module.BYPASS)
+        with self.assertRaisesRegex(ValueError, 'mixed'):
+            self.invoke(Receiver, {'value': [self.module.BYPASS, 'real']})
+
+    def test_switch_can_consume_bypass_and_select_fallback(self):
+        switch = importlib.import_module('crystools_test.nodes.switch_if_empty').CSwitchAnyIfEmpty
+        values = {'value': [self.module.BYPASS], 'on_true': ['fallback']}
+        self.assertEqual(self.invoke(switch, values)[0][0], 'fallback')
+        for branch, value in (('on_true', None), ('on_false', 'present')):
+            self.assertIs(switch.execute(value=value, empty_action='bypass')[0], self.module.BYPASS)
+            self.assertIs(switch.execute(value=value, **{branch: None}, empty_action='bypass')[0],
+                          self.module.BYPASS)
+
+
 class SwitchSelection(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
