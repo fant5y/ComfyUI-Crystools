@@ -13,3 +13,5 @@
 - Existing frontend pipe regression script passed after implementation (40-editor refresh 41 ms).
 - Final verification: all 13 CPU tests passed, including both reproduced review/serialization failures. Diff check passed with cr-at-eol (the repository's existing __init__.py uses CRLF).
 - Finishing: keep isolated branch and worktree for review; no push, merge, installation or publication, as specified in approved scope.
+- Follow-up: user authorized pushing; signed commit ca391d6 pushed to origin/codex/switch-any-if-empty and verified by matching remote SHA. No tests were rerun for publication.
+- Boolean-output follow-up: append `is_empty` BOOLEAN at output slot 1, preserving the existing value at slot 0. Add schema and result assertions for empty, nonempty, zero, false and disconnected selected branches. Tests written but not executed: user requires explicit approval for file execution. Earlier 13-test result predates this follow-up.

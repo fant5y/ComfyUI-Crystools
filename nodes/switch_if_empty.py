@@ -24,7 +24,10 @@ class CSwitchAnyIfEmpty(io.ComfyNode):
                 io.AnyType.Input('on_false', optional=True, lazy=True),
                 io.Boolean.Input('zero_is_empty', default=False),
             ],
-            outputs=[io.AnyType.Output(display_name='any')],
+            outputs=[
+                io.AnyType.Output(display_name='any'),
+                io.Boolean.Output(display_name='is_empty'),
+            ],
         )
 
     @classmethod
@@ -42,5 +45,6 @@ class CSwitchAnyIfEmpty(io.ComfyNode):
     @classmethod
     def execute(cls, value: object = None, on_true: object = EMPTY,
                 on_false: object = EMPTY, zero_is_empty: bool = False) -> io.NodeOutput:
-        selected = on_true if cls._is_empty(value, zero_is_empty) else on_false
-        return io.NodeOutput(EMPTY if selected is None else selected)
+        is_empty = bool(cls._is_empty(value, zero_is_empty))
+        selected = on_true if is_empty else on_false
+        return io.NodeOutput(EMPTY if selected is None else selected, is_empty)

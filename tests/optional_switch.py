@@ -159,6 +159,19 @@ class SwitchSelection(unittest.TestCase):
             self.assertIn(name, inputs['optional'])
             self.assertTrue(inputs['optional'][name][1]['lazy'])
 
+    def test_is_empty_boolean_is_second_output(self):
+        self.switch.INPUT_TYPES()
+        self.assertEqual(len(self.switch.RETURN_TYPES), 2)
+        self.assertEqual(self.switch.RETURN_TYPES[0], '*')
+        self.assertEqual(self.switch.RETURN_TYPES[1], 'BOOLEAN')
+        for value, expected in ((None, True), ('present', False), (0, False), (False, False)):
+            with self.subTest(value=value):
+                result = self.switch.execute(value=value, on_true='empty', on_false='valid')
+                self.assertIs(result[1], expected)
+                self.assertEqual(result[0], 'empty' if expected else 'valid')
+                self.assertIs(self.switch.execute(value=value)[1], expected)
+        self.assertIs(self.switch.execute(value=0, zero_is_empty=True)[1], True)
+
     def test_both_directions_and_unconnected_branches(self):
         for value, branch in ((None, 'on_true'), ('present', 'on_false')):
             with self.subTest(branch=branch):

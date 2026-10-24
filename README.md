@@ -605,6 +605,9 @@ and a lazy switch for any value type. Connect the value to check to `value`.
 It selects `on_true` when that value is empty, otherwise `on_false`.
 Both branches are optional; either one, or both, may remain disconnected.
 Only the selected branch is requested from upstream.
+The second output, `is_empty` (BOOLEAN), exposes the check result: true selects
+`on_true`, false selects `on_false`. It describes the checked `value`, regardless
+of whether the selected branch is connected. The value remains at output slot 0.
 
 An unconnected selected branch, or a selected branch returning `None`, emits
 Crystools' explicit `EMPTY` marker. Crystools omits that argument from the
