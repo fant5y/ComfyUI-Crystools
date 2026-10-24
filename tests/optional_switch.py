@@ -208,6 +208,17 @@ class SwitchSelection(unittest.TestCase):
                 self.assertEqual(result.ui['crystools_empty_branch'], [False])
                 self.assertEqual(result[0], 'valid')
 
+    def test_probe_is_an_output_after_switch_registration(self):
+        probe = importlib.import_module(
+            'crystools_test.nodes.switch_if_empty').CSwitchAnyIfEmptyProbe
+        self.switch.GET_SCHEMA()
+        probe.GET_SCHEMA()
+        self.assertFalse(self.switch.OUTPUT_NODE)
+        self.assertTrue(probe.OUTPUT_NODE)
+        self.assertFalse(self.switch.DEV_ONLY)
+        self.assertTrue(probe.DEV_ONLY)
+        self.assertEqual(probe.check_lazy_status(value=None, on_true=None), ['on_true'])
+
     def test_is_empty_boolean_is_second_output(self):
         self.switch.INPUT_TYPES()
         self.assertEqual(len(self.switch.RETURN_TYPES), 2)

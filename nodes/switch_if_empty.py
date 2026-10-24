@@ -56,12 +56,14 @@ class CSwitchAnyIfEmpty(io.ComfyNode):
         return io.NodeOutput(selected, is_empty)
 
 
-class CSwitchAnyIfEmptyProbe(CSwitchAnyIfEmpty):
+class CSwitchAnyIfEmptyProbe(io.ComfyNode):
     """Evaluate a switch before the frontend serializes native bypass routing."""
 
     @classmethod
     def define_schema(cls) -> io.Schema:
-        schema = super().define_schema()
+        # A registered V3 parent carries cached metadata such as OUTPUT_NODE.
+        # Share the schema factory, but keep the probe's class metadata separate.
+        schema = CSwitchAnyIfEmpty.define_schema()
         schema.node_id = 'CSWITCH_ANY_IF_EMPTY_PROBE'
         schema.display_name = 'Switch Any (If Empty) internal preflight'
         schema.is_output_node = True
@@ -69,9 +71,16 @@ class CSwitchAnyIfEmptyProbe(CSwitchAnyIfEmpty):
         return schema
 
     @classmethod
+    def check_lazy_status(cls, value: object = None, on_true: object = EMPTY,
+                          on_false: object = EMPTY, zero_is_empty: bool = False,
+                          empty_action: str = 'omit') -> list[str]:
+        return CSwitchAnyIfEmpty.check_lazy_status(
+            value, on_true, on_false, zero_is_empty, empty_action)
+
+    @classmethod
     def execute(cls, value: object = None, on_true: object = EMPTY,
                 on_false: object = EMPTY, zero_is_empty: bool = False,
                 empty_action: str = 'omit') -> io.NodeOutput:
-        result = super().execute(value, on_true, on_false, zero_is_empty, empty_action)
+        result = CSwitchAnyIfEmpty.execute(value, on_true, on_false, zero_is_empty, empty_action)
         return io.NodeOutput(result[0], result[1],
                              ui={'crystools_empty_branch': [result[0] is EMPTY]})
