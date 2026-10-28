@@ -10,7 +10,8 @@ const SWITCH = 'CSWITCH_ANY_IF_EMPTY';
 const PROBE = 'CSWITCH_ANY_IF_EMPTY_PROBE';
 
 async function fixture({ empty = true, fail = false, terminal = false, proxied = false,
-                         inputOverrides = {} } = {}) {
+                         inputOverrides = {}, liveInputs = false, duringProbe = () => {},
+                         failMain = false } = {}) {
     let extension;
     const submissions = [];
     const graph = { _nodes: [], links: new Map(), setDirtyCanvas() {},
@@ -43,12 +44,12 @@ async function fixture({ empty = true, fail = false, terminal = false, proxied =
                 }
                 if (value.comfyClass === 'Reroute') continue;
                 if (value.mode === 2 || value.mode === 4) continue;
-                const inputs = structuredClone(value.inputs);
+                const inputs = liveInputs ? value.inputs : structuredClone(value.inputs);
                 const id = `${prefix}${value.id}`;
                 Object.assign(inputs, inputOverrides[id]);
                 // Model native same-type bypass for this fixture's Batch.
                 if (value === downstream && receiver.mode === 4) inputs.image = [...receiver.inputs.image];
-                output[id] = { class_type: value.comfyClass, inputs };
+                output[id] = { class_type: value.comfyClass, inputs, _meta: { title: value.title } };
                 if (proxied) {
                     inputs.settings = new Proxy({ enabled: true }, {});
                     output[id] = new Proxy(output[id], {});
@@ -63,6 +64,11 @@ async function fixture({ empty = true, fail = false, terminal = false, proxied =
         async queuePrompt(number, data, options) {
             // Match the real API's JSON transport, which accepts reactive proxies.
             submissions.push({ number, data: JSON.parse(JSON.stringify(data)), options });
+            if (Object.values(data.output).some(entry => entry.class_type === PROBE)) {
+                duringProbe({ app, graph, node, source, control, receiver, downstream });
+            } else if (failMain) {
+                throw new Error('Main submission rejected');
+            }
             return { prompt_id: `job-${submissions.length}`, node_errors: {} };
         },
         async fetchApi(url) {
@@ -243,4 +249,116 @@ test('instance-specific bypass cannot silently change a shared sibling', async (
     assert.equal(f.receiver.mode, 0);
     assert.equal(f.downstream.mode, 0);
     assert.equal(f.submissions.length, 1);
+});
+
+test('display metadata and unrelated execution updates do not cancel bypass', async () => {
+    const f = await fixture({ duringProbe({ source, downstream }) {
+        source.title = 'Updated preview title';
+        downstream.inputs.generated_text = 'New execution result';
+    } });
+    await f.run();
+    assert.equal(f.receiver.mode, 4);
+    assert.equal(f.submissions.length, 2);
+    assert.equal(f.submissions.at(-1).data.output['4'].inputs.generated_text, 'New execution result');
+});
+
+test('object key ordering does not change a bypass decision', async () => {
+    const f = await fixture({ duringProbe({ source }) {
+        source.inputs = { settings: { second: 2, first: 1 }, seed: 1 };
+    } });
+    f.source.inputs = { seed: 1, settings: { first: 1, second: 2 } };
+    await f.run();
+    assert.equal(f.receiver.mode, 4);
+    assert.equal(f.submissions.length, 2);
+});
+
+test('changed checked inputs identify the node and input without printing values', async () => {
+    for (const liveInputs of [false, true]) {
+        const f = await fixture({ liveInputs, duringProbe({ source }) {
+            source.inputs.seed = 5678;
+        } });
+        f.source.inputs.seed = 1234;
+        await assert.rejects(f.run(), error =>
+            /node 1 input seed/.test(error.message) && !/1234|5678/.test(error.message));
+        assert.equal(f.receiver.mode, 0);
+        assert.equal(f.submissions.length, 1);
+        assert.equal(f.submissions[0].data.output['1'].inputs.seed, 1234);
+    }
+});
+
+test('changing the checked node type cancels the stale bypass decision', async () => {
+    const f = await fixture({ duringProbe({ source }) { source.comfyClass = 'DifferentSource'; } });
+    await assert.rejects(f.run(), /node 1 type/);
+    assert.equal(f.receiver.mode, 0);
+    assert.equal(f.submissions.length, 1);
+});
+
+test('changing the active workflow cancels submission to the previous graph', async () => {
+    const f = await fixture({ duringProbe({ app }) { app.rootGraph = { _nodes: [] }; } });
+    await assert.rejects(f.run(), /active workflow changed/);
+    assert.equal(f.receiver.mode, 0);
+    assert.equal(f.submissions.length, 1);
+});
+
+test('array order remains meaningful for checked inputs', async () => {
+    const f = await fixture({ duringProbe({ source }) { source.inputs.settings.values.reverse(); } });
+    f.source.inputs.settings = { values: ['first', 'second'] };
+    await assert.rejects(f.run(), /node 1 input settings/);
+    assert.equal(f.receiver.mode, 0);
+});
+
+test('rewiring a checked input identifies the changed switch dependency', async () => {
+    const f = await fixture({ duringProbe({ control }) { control.inputs.value = ['6', 0]; } });
+    f.node(6, 'Source');
+    await assert.rejects(f.run(), /node 2 input value/);
+    assert.equal(f.receiver.mode, 0);
+    assert.equal(f.submissions.length, 1);
+});
+
+test('receivers added during the check are included in native bypass', async () => {
+    let added;
+    const f = await fixture({ duringProbe({ node }) { added = node(6, 'Batch', { image: ['2', 0] }); } });
+    await f.run();
+    assert.equal(added.mode, 4);
+    assert.equal(f.receiver.mode, 4);
+    assert.equal(f.submissions.at(-1).data.output['6'], undefined);
+});
+
+test('failed main submission restores receivers added during the check', async () => {
+    let added;
+    const f = await fixture({ failMain: true,
+        duringProbe({ node }) { added = node(6, 'Batch', { image: ['2', 0] }); } });
+    await assert.rejects(f.run(), /Main submission rejected/);
+    assert.equal(added.mode, 0);
+    assert.equal(f.receiver.mode, 0);
+    assert.equal(added.properties.crystools_empty_bypass_original_mode, undefined);
+});
+
+test('later probes cannot silently invalidate an earlier bypass decision', async () => {
+    let checks = 0;
+    const f = await fixture({ duringProbe({ source }) {
+        if (++checks === 2) source.inputs.seed = 2;
+    } });
+    f.source.inputs.seed = 1;
+    f.node(6, 'Source');
+    const second = f.node(7, SWITCH, { value: ['6', 0], on_false: ['6', 0] });
+    second.widgets = [{ name: 'empty_action', value: 'bypass' }];
+    f.node(8, 'Output', { image: ['7', 0] });
+    await assert.rejects(f.run(), /node 1 input seed/);
+    assert.equal(checks, 2);
+    assert.equal(f.receiver.mode, 0);
+    assert.equal(f.submissions.length, 2);
+});
+
+test('a later control changed to omit is not used for native bypass', async () => {
+    let second;
+    const f = await fixture({ duringProbe() { second.widgets[0].value = 'omit'; } });
+    f.node(6, 'Source');
+    second = f.node(7, SWITCH, { value: ['6', 0], on_false: ['6', 0] });
+    second.widgets = [{ name: 'empty_action', value: 'bypass' }];
+    const sink = f.node(8, 'Output', { image: ['7', 0] });
+    await f.run();
+    assert.equal(f.receiver.mode, 4);
+    assert.equal(sink.mode, 0);
+    assert.equal(f.submissions.length, 2);
 });

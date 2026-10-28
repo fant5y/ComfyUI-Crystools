@@ -53,6 +53,49 @@ function orderedControls(output, controls) {
     return ordered;
 }
 
+function decisionInputs(output, id) {
+    const ancestors = output[id] ? ancestorPrompt(output, [id], false) : {};
+    // Match JSON transport and detach reactive inputs before awaiting execution.
+    const nodes = JSON.parse(JSON.stringify(Object.fromEntries(Object.entries(ancestors)
+        .map(([key, node]) => [key, { class_type: node.class_type, inputs: node.inputs }]))));
+    const stableJson = value => JSON.stringify(value, (_key, item) =>
+        item && typeof item === 'object' && !Array.isArray(item)
+            ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
+    return new Map(Object.entries(nodes).map(([key, node]) => [key, {
+        type: node.class_type,
+        inputs: new Map(Object.entries(node.inputs).map(([name, value]) => [name, stableJson(value)])),
+    }]));
+}
+
+function changedDecisionInputs(before, after) {
+    const changes = [];
+    for (const id of new Set([...before.keys(), ...after.keys()])) {
+        if (changes.length >= 5) break;
+        const previous = before.get(id), current = after.get(id);
+        if (!previous || !current) {
+            changes.push(`node ${id} ${current ? 'added' : 'removed'}`);
+            continue;
+        }
+        if (previous.type !== current.type) changes.push(`node ${id} type`);
+        for (const name of new Set([...previous.inputs.keys(), ...current.inputs.keys()])) {
+            if (changes.length >= 5) break;
+            if (previous.inputs.get(name) !== current.inputs.get(name)) {
+                changes.push(`node ${id} input ${name}`);
+            }
+        }
+    }
+    return changes;
+}
+
+function validateDecisions(output, decisions) {
+    for (const [id, inputs] of decisions) {
+        const changes = changedDecisionInputs(inputs, decisionInputs(output, id));
+        if (changes.length) {
+            throw new Error(`Crystools bypass: checked inputs changed during preflight (${changes.join('; ')}); run again`);
+        }
+    }
+}
+
 async function completedProbe(promptId) {
     if (!promptId) throw new Error('Crystools bypass: preflight was not accepted');
     let absentCount = 0;
@@ -86,7 +129,7 @@ app.registerExtension({
         const originalQueue = api.queuePrompt;
         api.queuePrompt = async function (number, data, options, ...rest) {
             const graph = app.rootGraph ?? app.graph;
-            const entries = graphNodes(graph);
+            let entries = graphNodes(graph);
             const owned = entries.filter(({ node }) => node.properties?.[OWNED_MODE] !== undefined);
             const isControl = ({ node }) => node.comfyClass === SWITCH &&
                 node.widgets?.find(widget => widget.name === 'empty_action')?.value === 'bypass';
@@ -111,22 +154,31 @@ app.registerExtension({
                     roots.filter(id => baseline.output[id]), false);
                 const active = entries.filter(entry => isControl(entry) &&
                     entry.node.mode !== 2 && entry.node.mode !== 4 && reachable[entry.id]);
-                for (const { id } of orderedControls(baseline.output, active)) {
+                const checkedDecisions = new Map();
+                for (const entry of orderedControls(baseline.output, active)) {
+                    if (!isControl(entry)) continue;
+                    const { id } = entry;
                     const stage = await app.graphToPrompt(graph);
                     const stageReachable = ancestorPrompt(stage.output,
                         roots.filter(root => stage.output[root]), false);
                     if (!stageReachable[id]) continue;
+                    const checkedOutput = JSON.parse(JSON.stringify(ancestorPrompt(stage.output, [id], false)));
+                    const checkedInputs = decisionInputs(checkedOutput, id);
+                    checkedDecisions.set(id, checkedInputs);
                     const preflight = { workflow: stage.workflow,
-                        output: ancestorPrompt(stage.output, [id]) };
+                        output: ancestorPrompt(checkedOutput, [id]) };
                     // Check on the user's configured device, only as part of their Run.
                     const queued = await originalQueue.call(this, number, preflight,
                         { ...options, partialExecutionTargets: [id] }, ...rest);
                     const results = await completedProbe(queued.prompt_id);
-                    const current = await app.graphToPrompt(graph);
-                    if ((app.rootGraph ?? app.graph) !== graph ||
-                        JSON.stringify(current.output) !== JSON.stringify(stage.output)) {
-                        throw new Error('Crystools bypass: workflow changed during preflight; run again');
+                    if ((app.rootGraph ?? app.graph) !== graph) {
+                        throw new Error('Crystools bypass: active workflow changed during preflight; run again');
                     }
+                    const current = await app.graphToPrompt(graph);
+                    if ((app.rootGraph ?? app.graph) !== graph) {
+                        throw new Error('Crystools bypass: active workflow changed during preflight; run again');
+                    }
+                    validateDecisions(current.output, checkedDecisions);
                     const targets = new Set();
                     const states = results[id]?.crystools_empty_branch;
                     if (!Array.isArray(states) || !states.length ||
@@ -134,6 +186,7 @@ app.registerExtension({
                         throw new Error(`Crystools bypass: node ${id} has no single empty-branch result`);
                     }
                     if (!states[0]) continue;
+                    entries = graphNodes(graph);
                     // Serialized links already resolve reroutes and subgraph boundaries.
                     for (const entry of entries) {
                         const inputs = current.output[entry.id]?.inputs ?? {};
@@ -156,6 +209,10 @@ app.registerExtension({
                 }
                 graph.setDirtyCanvas?.(true, true);
                 const prompt = await app.graphToPrompt(graph);
+                if ((app.rootGraph ?? app.graph) !== graph) {
+                    throw new Error('Crystools bypass: active workflow changed during preflight; run again');
+                }
+                validateDecisions(prompt.output, checkedDecisions);
                 const targets = requested?.length
                     ? requested.map(String).filter(id => prompt.output[id])
                     : Object.keys(prompt.output).filter(id =>
@@ -167,7 +224,8 @@ app.registerExtension({
                     ? { ...options, partialExecutionTargets: targets } : options;
                 return await originalQueue.call(this, number, prompt, finalOptions, ...rest);
             } catch (error) {
-                for (const { node } of entries) {
+                const nodes = new Set([...entries, ...graphNodes(graph)].map(entry => entry.node));
+                for (const node of nodes) {
                     if (node.properties?.[OWNED_MODE] !== undefined) {
                         node.mode = node.properties[OWNED_MODE];
                         delete node.properties[OWNED_MODE];
