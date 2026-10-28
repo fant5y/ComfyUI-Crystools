@@ -111,7 +111,7 @@ app.registerExtension({
                     roots.filter(id => baseline.output[id]), false);
                 const active = entries.filter(entry => isControl(entry) &&
                     entry.node.mode !== 2 && entry.node.mode !== 4 && reachable[entry.id]);
-                for (const { node, id } of orderedControls(baseline.output, active)) {
+                for (const { id } of orderedControls(baseline.output, active)) {
                     const stage = await app.graphToPrompt(graph);
                     const stageReachable = ancestorPrompt(stage.output,
                         roots.filter(root => stage.output[root]), false);
@@ -134,14 +134,20 @@ app.registerExtension({
                         throw new Error(`Crystools bypass: node ${id} has no single empty-branch result`);
                     }
                     if (!states[0]) continue;
-                    for (const linkId of node.outputs?.[0]?.links ?? []) {
-                        const links = node.graph.links;
-                        const link = links.get ? links.get(linkId) : links[linkId];
-                        const target = link && node.graph.getNodeById(link.target_id);
-                        if (target) targets.add(target);
+                    // Serialized links already resolve reroutes and subgraph boundaries.
+                    for (const entry of entries) {
+                        const inputs = current.output[entry.id]?.inputs ?? {};
+                        if (Object.values(inputs).some(value => Array.isArray(value) &&
+                            value.length === 2 && String(value[0]) === id && value[1] === 0)) {
+                            targets.add(entry.node);
+                        }
                     }
                     for (const node of targets) {
                         if (node.mode === 2 || node.mode === 4) continue;
+                        if (entries.filter(entry => entry.node === node).length > 1) {
+                            throw new Error(`Crystools bypass: receiver ${node.id} is inside a shared subgraph; ` +
+                                'its native mode affects every instance. Use a separate subgraph definition for this receiver.');
+                        }
                         node.properties ??= {};
                         node.properties[OWNED_MODE] = node.mode;
                         node.mode = 4;

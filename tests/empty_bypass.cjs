@@ -9,7 +9,8 @@ const { test } = require('node:test');
 const SWITCH = 'CSWITCH_ANY_IF_EMPTY';
 const PROBE = 'CSWITCH_ANY_IF_EMPTY_PROBE';
 
-async function fixture({ empty = true, fail = false, terminal = false, proxied = false } = {}) {
+async function fixture({ empty = true, fail = false, terminal = false, proxied = false,
+                         inputOverrides = {} } = {}) {
     let extension;
     const submissions = [];
     const graph = { _nodes: [], links: new Map(), setDirtyCanvas() {},
@@ -34,17 +35,27 @@ async function fixture({ empty = true, fail = false, terminal = false, proxied =
         registerExtension(value) { extension = value; },
         async graphToPrompt() {
             const output = {};
-            for (const value of graph._nodes) {
+            function visit(owner, prefix = '') {
+              for (const value of owner._nodes) {
+                if (value.subgraph) {
+                    visit(value.subgraph, `${prefix}${value.id}:`);
+                    continue;
+                }
+                if (value.comfyClass === 'Reroute') continue;
                 if (value.mode === 2 || value.mode === 4) continue;
                 const inputs = structuredClone(value.inputs);
+                const id = `${prefix}${value.id}`;
+                Object.assign(inputs, inputOverrides[id]);
                 // Model native same-type bypass for this fixture's Batch.
-                if (value === downstream && receiver.mode === 4) inputs.image = ['2', 0];
-                output[value.id] = { class_type: value.comfyClass, inputs };
+                if (value === downstream && receiver.mode === 4) inputs.image = [...receiver.inputs.image];
+                output[id] = { class_type: value.comfyClass, inputs };
                 if (proxied) {
                     inputs.settings = new Proxy({ enabled: true }, {});
-                    output[value.id] = new Proxy(output[value.id], {});
+                    output[id] = new Proxy(output[id], {});
                 }
+              }
             }
+            visit(graph);
             return { output, workflow: {} };
         },
     };
@@ -152,4 +163,84 @@ test('bypassing the only output remains purple without submitting an invalid mai
     await f.run();
     assert.equal(f.submissions.length, 1);
     assert.equal(f.receiver.mode, 4);
+});
+
+test('bypass follows resolved links across nested subgraph output boundaries', async () => {
+    for (const depth of [1, 2]) {
+        const f = await fixture();
+        f.graph._nodes = f.graph._nodes.filter(node => node !== f.control);
+        const inner = { _nodes: [f.control], links: new Map(),
+            getNodeById(id) { return this._nodes.find(node => node.id === id); } };
+        f.control.graph = inner;
+        inner.links.set(1, { target_id: -20, target_slot: 0 });
+        inner.links.set(2, { target_id: -20, target_slot: 1 });
+        const host = f.node(6, 'Subgraph');
+        host.subgraph = inner;
+        let controlId = '6:2';
+        if (depth === 2) {
+            f.graph._nodes = f.graph._nodes.filter(node => node !== host);
+            const outer = f.node(7, 'Subgraph');
+            outer.subgraph = { _nodes: [host] };
+            controlId = '7:6:2';
+        }
+        f.receiver.inputs.image = [controlId, 0];
+        f.booleanReceiver.inputs.value = [controlId, 1];
+        await f.run();
+        assert.equal(f.receiver.mode, 4);
+        assert.equal(f.booleanReceiver.mode, 0);
+        assert.equal(f.downstream.mode, 0);
+        assert.equal(host.mode, 0);
+        assert.equal(f.submissions.at(-1).data.output['4'].class_type, 'Output');
+        assert.deepEqual(f.submissions.at(-1).data.output['4'].inputs.image, [controlId, 0]);
+        assert.equal(f.submissions.at(-1).data.output[controlId].class_type, SWITCH);
+    }
+});
+
+test('bypass skips a frontend reroute and changes the real receiver only', async () => {
+    const f = await fixture();
+    const reroute = f.node(6, 'Reroute');
+    f.graph.links.set(1, { target_id: reroute.id, target_slot: 0 });
+    await f.run();
+    assert.equal(f.receiver.mode, 4);
+    assert.equal(reroute.mode, 0);
+    assert.equal(f.downstream.mode, 0);
+});
+
+test('manual receiver modes survive empty checks and later restoration', async () => {
+    for (const mode of [2, 4]) {
+        const f = await fixture();
+        f.receiver.mode = mode;
+        await f.run();
+        f.control.widgets[0].value = 'omit';
+        await f.run();
+        assert.equal(f.receiver.mode, mode);
+        assert.equal(f.receiver.properties.crystools_empty_bypass_original_mode, undefined);
+    }
+});
+
+test('a target inside one subgraph is bypassed without bypassing its host', async () => {
+    const f = await fixture();
+    f.graph._nodes = f.graph._nodes.filter(node => node !== f.receiver);
+    const host = f.node(6, 'Subgraph');
+    host.subgraph = { _nodes: [f.receiver] };
+    f.downstream.inputs.image = ['6:3', 0];
+    await f.run();
+    assert.equal(f.receiver.mode, 4);
+    assert.equal(host.mode, 0);
+    assert.equal(f.downstream.mode, 0);
+    assert.deepEqual(f.submissions.at(-1).data.output['4'].inputs.image, ['2', 0]);
+});
+
+test('instance-specific bypass cannot silently change a shared sibling', async () => {
+    const f = await fixture({ inputOverrides: { '7:3': { image: ['1', 0] } } });
+    f.graph._nodes = f.graph._nodes.filter(node => node !== f.receiver);
+    const shared = { _nodes: [f.receiver] };
+    f.node(6, 'Subgraph').subgraph = shared;
+    f.node(7, 'Subgraph').subgraph = shared;
+    f.downstream.inputs.image = ['6:3', 0];
+    f.node(8, 'Output', { image: ['7:3', 0] });
+    await assert.rejects(f.run(), /shared subgraph/);
+    assert.equal(f.receiver.mode, 0);
+    assert.equal(f.downstream.mode, 0);
+    assert.equal(f.submissions.length, 1);
 });

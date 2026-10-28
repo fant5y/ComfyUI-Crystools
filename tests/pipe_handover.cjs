@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 const TO = 'Pipe to/edit any [Crystools]';
 const FROM = 'Pipe from any [Crystools]';
 const FIRST = 'CSWITCH_ANY_AUTO';
+const IF_EMPTY = 'CSWITCH_ANY_IF_EMPTY';
 let extension;
 const app = {
   registerExtension(value) { extension = value; },
@@ -30,6 +31,10 @@ class Node {
       this.inputs = []; this.outputs = [{name:'any',type:'*',links:[]}];
       for(let i=1;i<=100;i++) this.addInput('any_'+i,'*');
     }
+    if(type === IF_EMPTY) {
+      this.inputs = ['value', 'on_true', 'on_false'].map(name=>({name,type:'*',link:null}));
+      this.outputs = [{name:'any',type:'*',links:[]}, {name:'is_empty',type:'BOOLEAN',links:[]}];
+    }
     this.size = [200,200];
     if (type === TO) for (let i=1;i<=100;i++) this.addInput('any_'+i,'*');
     if (type === FROM) for (let i=1;i<=100;i++) this.addOutput('any_'+i,'*');
@@ -51,6 +56,7 @@ class Node {
 }
 class ToNode extends Node { constructor(owner){super(TO,owner);} }
 class FirstNode extends Node { constructor(owner){super(FIRST,owner);} }
+class IfEmptyNode extends Node { constructor(owner){super(IF_EMPTY,owner);} }
 class FromNode extends Node { constructor(owner){super(FROM,owner);} }
 let nextLink = 1;
 function connect(source,sourceSlot,target,targetSlot) {
@@ -81,6 +87,7 @@ const flush = () => new Promise(resolve=>setImmediate(resolve));
   extension.beforeRegisterNodeDef(ToNode,{name:TO});
   extension.beforeRegisterNodeDef(FromNode,{name:FROM});
   extension.beforeRegisterNodeDef(FirstNode,{name:FIRST});
+  extension.beforeRegisterNodeDef(IfEmptyNode,{name:IF_EMPTY});
   const to = new ToNode(), from = new FromNode();
   assert.equal(to.inputs.length,7);
   assert.equal(from.outputs.length,7);
@@ -96,12 +103,61 @@ const flush = () => new Promise(resolve=>setImmediate(resolve));
   assert.equal(from.outputs[3].label,'Photo');
   assert.equal(from.outputs[3].type,'IMAGE');
   assert.equal(from.outputs[3].color_off,'#image-off');
+  // The checked value is not an output branch. Either branch may be absent.
+  const conditional = new IfEmptyNode(), conditionalEnd = new FromNode();
+  connect(image,0,conditional,0);
+  connect(to,0,conditional,2);
+  connect(conditional,0,conditionalEnd,0);
+  await flush();
+  assert.equal(conditional.inputs.length,3);
+  assert.equal(conditional.outputs.length,2);
+  assert.equal(conditional.outputs[0].type,'CPipeAny');
+  assert.equal(conditional.outputs[1].type,'BOOLEAN');
+  assert.equal(conditionalEnd.outputs[3].label,'Photo');
+  disconnect(to,0,conditional,2);
+  connect(to,0,conditional,1);
+  await flush();
+  assert.equal(conditionalEnd.outputs[3].label,'Photo');
+  const alternative = new ToNode();
+  const maskSource = new Node('Mask');
+  maskSource.outputs[0] = {name:'mask',label:'Mask',type:'MASK',links:[]};
+  connect(maskSource,0,alternative,3);
+  connect(alternative,0,conditional,2);
+  await flush();
+  assert.equal(conditionalEnd.outputs[3].label,'Photo / Mask');
+  assert.equal(conditionalEnd.outputs[3].type,'*');
+  const conditionalRelay = new ToNode(), conditionalAgain = new IfEmptyNode(), conditionalLast = new FromNode();
+  connect(conditional,0,conditionalRelay,0);
+  connect(conditionalRelay,0,conditionalAgain,2);
+  connect(conditionalAgain,0,conditionalLast,0);
+  await flush();
+  assert.equal(conditionalLast.outputs[3].label,'Photo / Mask');
+  assert.equal(conditionalLast.outputs[3].name,'any_3');
+  assert.equal(conditionalAgain.outputs[1].name,'is_empty');
+  const booleanPipe = new ToNode(), booleanEnd = new FromNode();
+  connect(conditional,1,booleanPipe,1); connect(booleanPipe,0,booleanEnd,0);
+  await flush();
+  assert.equal(booleanEnd.outputs[1].label,'is_empty');
+  assert.equal(booleanEnd.outputs[1].type,'BOOLEAN');
+  // Reordered branches retain alternatives at their original positions.
+  const reorderedA = new ToNode(), reorderedB = new ToNode(), reorderedChoice = new IfEmptyNode();
+  const reorderedEnd = new FromNode();
+  connect(image,0,reorderedA,1); connect(maskSource,0,reorderedA,2);
+  connect(maskSource,0,reorderedB,1); connect(image,0,reorderedB,2);
+  connect(reorderedA,0,reorderedChoice,1); connect(reorderedB,0,reorderedChoice,2);
+  connect(reorderedChoice,0,reorderedEnd,0); await flush();
+  assert.equal(reorderedEnd.outputs[1].label,'Photo / Mask');
+  assert.equal(reorderedEnd.outputs[2].label,'Mask / Photo');
+  assert.equal(reorderedEnd.outputs[1].type,'*');
+  assert.equal(reorderedEnd.outputs[2].type,'*');
   // Expand beyond six and preserve holes and output indices.
   for (let i=6;i<=12;i++) {
     connect(image,0,to,i);
     await flush();
   }
   assert.equal(to.inputs.length,14); // Twelve values plus spare and pipe.
+  assert.equal(conditionalLast.outputs[12].label,'Photo');
+  assert.equal(conditionalLast.outputs[12].name,'any_12');
   assert.equal(from.outputs.length,13);
   assert.equal(from.outputs[12].label,'Photo');
   const edit = new ToNode(), last = new FromNode();

@@ -3,7 +3,9 @@ const PIPE_TO = 'Pipe to/edit any [Crystools]';
 const PIPE_FROM = 'Pipe from any [Crystools]';
 const CAPACITY = 100;
 const SWITCH_ANY_AUTO = 'CSWITCH_ANY_AUTO';
+const SWITCH_ANY_IF_EMPTY = 'CSWITCH_ANY_IF_EMPTY';
 const isPipe = (node) => node.type === PIPE_TO || node.type === PIPE_FROM;
+const isSwitch = (node) => node.type === SWITCH_ANY_AUTO || node.type === SWITCH_ANY_IF_EMPTY;
 const pendingGraphs = new WeakSet();
 let templateLayouts = new WeakMap();
 let collectingTemplates = false;
@@ -82,6 +84,9 @@ const orderedInputs = (node) => {
     node.properties['crystools_input_order'] = order;
     return order.map(id => connected.find(slot => slot.id === id).index);
 };
+const branchInputs = (node) => node.type === SWITCH_ANY_IF_EMPTY ?
+    node.inputs.flatMap((slot, index) => ['on_true', 'on_false'].includes(slot.name) && slot.link !== null && slot.link !== undefined ? [index] : []) :
+    orderedInputs(node);
 const contextKey = (node, context) => {
     const path = [node.id];
     let graph = node.graph;
@@ -202,7 +207,7 @@ const describeOutput = (source) => {
     if (node.type === PIPE_FROM && index > 0) {
         return describePipe(node, visited, context)[index - 1];
     }
-    if (node.type === SWITCH_ANY_AUTO) {
+    if (isSwitch(node) && index === 0) {
         return describeSwitch(node, visited, context);
     }
     const slot = node.outputs[index];
@@ -224,7 +229,7 @@ const describeSwitch = (node, visited, context) => {
         return undefined;
     }
     const path = new Set(visited).add(contextKey(node, context));
-    const values = orderedInputs(node).sort((left, right) => left - right).map(index => {
+    const values = branchInputs(node).sort((left, right) => left - right).map(index => {
         const source = resolveSource(node.graph, node.getInputLink(index), context, path);
         return { description: source ? describeOutput(source) : undefined, inactive: source?.inactive };
     });
@@ -253,10 +258,11 @@ const pipeSources = (node, visited, context) => {
         return undefined;
     }
     const sources = [];
-    for (const index of orderedInputs(node)) {
+    for (const index of branchInputs(node)) {
         const source = resolveSource(node.graph, node.getInputLink(index), context, new Set(visited).add(contextKey(node, context)));
         if (!source || !(isPipe(source.node) && source.index === 0 ||
-            source.node.type === SWITCH_ANY_AUTO && pipeSources(source.node, source.visited, source.context)?.length)) {
+            isSwitch(source.node) && source.index === 0 &&
+            pipeSources(source.node, source.visited, source.context)?.length)) {
             return undefined;
         }
         sources.push(source);
@@ -324,9 +330,18 @@ const describePipe = (node, visited = new Set(), context = displayContext(node.g
         const sources = pipeSources(node, visited, context) || [];
         return mergeLayouts(sources.map(source => describePipe(source.node, source.visited, source.context)));
     }
+    if (node.type === SWITCH_ANY_IF_EMPTY) {
+        const values = [];
+        for (const source of pipeSources(node, visited, context) || []) {
+            describePipe(source.node, source.visited, source.context).forEach((value, index) => {
+                values[index] = replaceDescription(values[index], value);
+            });
+        }
+        return identifyLayout(values);
+    }
     const path = new Set(visited).add(contextKey(node, context));
     const parent = resolveSource(node.graph, node.getInputLink(0), context, path);
-    const values = parent && (isPipe(parent.node) || parent.node.type === SWITCH_ANY_AUTO) ?
+    const values = parent && (isPipe(parent.node) || isSwitch(parent.node) && parent.index === 0) ?
         describePipe(parent.node, parent.visited, parent.context) : [];
     if (node.type === PIPE_TO) {
         node.inputs.slice(1).forEach((_slot, index) => {
@@ -438,7 +453,7 @@ const templateTargets = (source, depth = 0) => {
     if (!node.graph || visited.has(contextKey(node, context))) {
         return [];
     }
-    if (node.type === SWITCH_ANY_AUTO) {
+    if (isSwitch(node) && source.index === 0) {
         return (pipeSources(node, visited, context) || []).flatMap(branch => templateTargets(branch, depth + 1));
     }
     if (!isPipe(node) || source.index !== 0) {
@@ -496,6 +511,16 @@ const refresh = (node) => {
     if (node.type === SWITCH_ANY_AUTO) {
         refreshSwitch(node);
     }
+    else if (node.type === SWITCH_ANY_IF_EMPTY) {
+        refreshSwitchOutput(node);
+        node.inputs.forEach((slot, index) => {
+            if (!['on_true', 'on_false'].includes(slot.name)) {
+                return;
+            }
+            const source = node.graph && resolveSource(node.graph, node.getInputLink(index), displayContext(node.graph), new Set());
+            decorateSlot(slot, source ? describeOutput(source) : undefined, false);
+        });
+    }
     else {
         refreshNode(node);
     }
@@ -511,7 +536,7 @@ const scheduleRefresh = (graph) => {
             collectTemplates(root);
             for (const owner of graphsOf(root)) {
                 observeGraph(owner);
-                owner._nodes.filter(node => isPipe(node) || node.type === SWITCH_ANY_AUTO).forEach(refresh);
+                owner._nodes.filter(node => isPipe(node) || isSwitch(node)).forEach(refresh);
                 owner.setDirtyCanvas(true, true);
             }
         }
@@ -572,14 +597,14 @@ app.registerExtension({
         scheduleRefresh(app.rootGraph);
     },
     beforeRegisterNodeDef(nodeType, nodeData) {
-        if (![PIPE_TO, PIPE_FROM, SWITCH_ANY_AUTO].includes(nodeData.name)) {
+        if (![PIPE_TO, PIPE_FROM, SWITCH_ANY_AUTO, SWITCH_ANY_IF_EMPTY].includes(nodeData.name)) {
             return;
         }
         const prototype = nodeType.prototype;
         const draw = prototype.onDrawForeground;
         prototype.onDrawForeground = function (...args) {
             const result = draw?.apply(this, args);
-            const changed = this.type === SWITCH_ANY_AUTO ? refreshSwitchOutput(this) : refreshGroupLabel(this);
+            const changed = isSwitch(this) ? refreshSwitchOutput(this) : refreshGroupLabel(this);
             if (changed) {
                 scheduleRefresh(this.graph);
             }
