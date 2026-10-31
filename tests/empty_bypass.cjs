@@ -17,8 +17,15 @@ async function fixture({ empty = true, fail = false, terminal = false, proxied =
     const graph = { _nodes: [], links: new Map(), setDirtyCanvas() {},
         getNodeById(id) { return this._nodes.find(node => node.id === id); } };
     function node(id, comfyClass, inputs = {}) {
-        const value = { id, comfyClass, mode: 0, properties: {}, graph, inputs,
-            outputs: [{ links: [] }], widgets: [] };
+        const value = { id, comfyClass, mode: 0, properties: {}, graph, promptInputs: inputs,
+            get inputs() { return Object.keys(this.promptInputs).map(name => ({ name,
+                type: name === 'value' && comfyClass === 'BooleanReader' ? 'BOOLEAN' : 'IMAGE',
+                link: Array.isArray(this.promptInputs[name]) ? 1 : null })); },
+            getInputLink(index) {
+                const value = this.promptInputs[this.inputs[index]?.name];
+                return Array.isArray(value) ? { origin_id: value[0], origin_slot: value[1] } : null;
+            },
+            outputs: [{ links: [], type: 'IMAGE' }], widgets: [] };
         graph._nodes.push(value);
         return value;
     }
@@ -28,7 +35,7 @@ async function fixture({ empty = true, fail = false, terminal = false, proxied =
     const receiver = node(3, terminal ? 'Output' : 'Batch', { image: ['2', 0] });
     const downstream = terminal ? null : node(4, 'Output', { image: ['3', 0] });
     const booleanReceiver = node(5, 'BooleanReader', { value: ['2', 1] });
-    control.outputs = [{ links: [1] }, { links: [2] }];
+    control.outputs = [{ links: [1], type: 'IMAGE' }, { links: [2], type: 'BOOLEAN' }];
     graph.links.set(1, { target_id: 3 });
     graph.links.set(2, { target_id: 5 });
     const app = {
@@ -44,11 +51,11 @@ async function fixture({ empty = true, fail = false, terminal = false, proxied =
                 }
                 if (value.comfyClass === 'Reroute') continue;
                 if (value.mode === 2 || value.mode === 4) continue;
-                const inputs = liveInputs ? value.inputs : structuredClone(value.inputs);
+                const inputs = liveInputs ? value.promptInputs : structuredClone(value.promptInputs);
                 const id = `${prefix}${value.id}`;
                 Object.assign(inputs, inputOverrides[id]);
                 // Model native same-type bypass for this fixture's Batch.
-                if (value === downstream && receiver.mode === 4) inputs.image = [...receiver.inputs.image];
+                if (value === downstream && receiver.mode === 4) inputs.image = [...receiver.promptInputs.image];
                 output[id] = { class_type: value.comfyClass, inputs, _meta: { title: value.title } };
                 if (proxied) {
                     inputs.settings = new Proxy({ enabled: true }, {});
@@ -83,7 +90,9 @@ async function fixture({ empty = true, fail = false, terminal = false, proxied =
             } };
         },
     };
-    const context = vm.createContext({ structuredClone, setTimeout });
+    const context = vm.createContext({ structuredClone, setTimeout, LiteGraph: {
+        isValidConnection(a, b) { return a === b || a === '*' || b === '*'; },
+    } });
     const bridges = new Map();
     for (const [name, value] of Object.entries({ app, api })) {
         bridges.set(`../../scripts/${name}.js`, new vm.SyntheticModule([name], function () {
@@ -189,8 +198,8 @@ test('bypass follows resolved links across nested subgraph output boundaries', a
             outer.subgraph = { _nodes: [host] };
             controlId = '7:6:2';
         }
-        f.receiver.inputs.image = [controlId, 0];
-        f.booleanReceiver.inputs.value = [controlId, 1];
+        f.receiver.promptInputs.image = [controlId, 0];
+        f.booleanReceiver.promptInputs.value = [controlId, 1];
         await f.run();
         assert.equal(f.receiver.mode, 4);
         assert.equal(f.booleanReceiver.mode, 0);
@@ -229,7 +238,7 @@ test('a target inside one subgraph is bypassed without bypassing its host', asyn
     f.graph._nodes = f.graph._nodes.filter(node => node !== f.receiver);
     const host = f.node(6, 'Subgraph');
     host.subgraph = { _nodes: [f.receiver] };
-    f.downstream.inputs.image = ['6:3', 0];
+    f.downstream.promptInputs.image = ['6:3', 0];
     await f.run();
     assert.equal(f.receiver.mode, 4);
     assert.equal(host.mode, 0);
@@ -243,7 +252,7 @@ test('instance-specific bypass cannot silently change a shared sibling', async (
     const shared = { _nodes: [f.receiver] };
     f.node(6, 'Subgraph').subgraph = shared;
     f.node(7, 'Subgraph').subgraph = shared;
-    f.downstream.inputs.image = ['6:3', 0];
+    f.downstream.promptInputs.image = ['6:3', 0];
     f.node(8, 'Output', { image: ['7:3', 0] });
     await assert.rejects(f.run(), /shared subgraph/);
     assert.equal(f.receiver.mode, 0);
@@ -254,72 +263,73 @@ test('instance-specific bypass cannot silently change a shared sibling', async (
 test('display metadata and unrelated execution updates do not cancel bypass', async () => {
     const f = await fixture({ duringProbe({ source, downstream }) {
         source.title = 'Updated preview title';
-        downstream.inputs.generated_text = 'New execution result';
+        downstream.promptInputs.generated_text = 'New execution result';
     } });
     await f.run();
     assert.equal(f.receiver.mode, 4);
     assert.equal(f.submissions.length, 2);
-    assert.equal(f.submissions.at(-1).data.output['4'].inputs.generated_text, 'New execution result');
+    assert.equal(f.submissions.at(-1).data.output['4'].inputs.generated_text, undefined);
 });
 
 test('object key ordering does not change a bypass decision', async () => {
     const f = await fixture({ duringProbe({ source }) {
-        source.inputs = { settings: { second: 2, first: 1 }, seed: 1 };
+        source.promptInputs = { settings: { second: 2, first: 1 }, seed: 1 };
     } });
-    f.source.inputs = { seed: 1, settings: { first: 1, second: 2 } };
+    f.source.promptInputs = { seed: 1, settings: { first: 1, second: 2 } };
     await f.run();
     assert.equal(f.receiver.mode, 4);
     assert.equal(f.submissions.length, 2);
 });
 
-test('changed checked inputs identify the node and input without printing values', async () => {
+test('edits during preflight stay on the canvas while the submitted run keeps its inputs', async () => {
     for (const liveInputs of [false, true]) {
         const f = await fixture({ liveInputs, duringProbe({ source }) {
-            source.inputs.seed = 5678;
+            source.promptInputs.seed = 5678;
         } });
-        f.source.inputs.seed = 1234;
-        await assert.rejects(f.run(), error =>
-            /node 1 input seed/.test(error.message) && !/1234|5678/.test(error.message));
-        assert.equal(f.receiver.mode, 0);
-        assert.equal(f.submissions.length, 1);
+        f.source.promptInputs.seed = 1234;
+        await f.run();
+        assert.equal(f.receiver.mode, 4);
+        assert.equal(f.submissions.length, 2);
         assert.equal(f.submissions[0].data.output['1'].inputs.seed, 1234);
+        assert.equal(f.submissions[1].data.output['1'].inputs.seed, 1234);
+        assert.equal(f.source.promptInputs.seed, 5678);
     }
 });
 
-test('changing the checked node type cancels the stale bypass decision', async () => {
+test('changing a checked node type does not change the captured run', async () => {
     const f = await fixture({ duringProbe({ source }) { source.comfyClass = 'DifferentSource'; } });
-    await assert.rejects(f.run(), /node 1 type/);
-    assert.equal(f.receiver.mode, 0);
-    assert.equal(f.submissions.length, 1);
+    await f.run();
+    assert.equal(f.submissions.at(-1).data.output['1'].class_type, 'Source');
+    assert.equal(f.source.comfyClass, 'DifferentSource');
 });
 
-test('changing the active workflow cancels submission to the previous graph', async () => {
+test('changing the active workflow leaves the captured run intact', async () => {
     const f = await fixture({ duringProbe({ app }) { app.rootGraph = { _nodes: [] }; } });
-    await assert.rejects(f.run(), /active workflow changed/);
+    await f.run();
     assert.equal(f.receiver.mode, 0);
-    assert.equal(f.submissions.length, 1);
+    assert.equal(f.submissions.length, 2);
 });
 
-test('array order remains meaningful for checked inputs', async () => {
-    const f = await fixture({ duringProbe({ source }) { source.inputs.settings.values.reverse(); } });
-    f.source.inputs.settings = { values: ['first', 'second'] };
-    await assert.rejects(f.run(), /node 1 input settings/);
-    assert.equal(f.receiver.mode, 0);
+test('array edits are detached from the captured inputs', async () => {
+    const f = await fixture({ duringProbe({ source }) { source.promptInputs.settings.values.reverse(); } });
+    f.source.promptInputs.settings = { values: ['first', 'second'] };
+    await f.run();
+    assert.deepEqual(f.submissions.at(-1).data.output['1'].inputs.settings.values, ['first', 'second']);
 });
 
-test('rewiring a checked input identifies the changed switch dependency', async () => {
-    const f = await fixture({ duringProbe({ control }) { control.inputs.value = ['6', 0]; } });
+test('rewiring a checked input affects the next run', async () => {
+    const f = await fixture({ duringProbe({ control }) { control.promptInputs.value = ['6', 0]; } });
     f.node(6, 'Source');
-    await assert.rejects(f.run(), /node 2 input value/);
-    assert.equal(f.receiver.mode, 0);
-    assert.equal(f.submissions.length, 1);
+    await f.run();
+    assert.deepEqual(f.submissions.at(-1).data.output['2'].inputs.value, ['1', 0]);
+    assert.deepEqual(f.control.promptInputs.value, ['6', 0]);
 });
 
-test('receivers added during the check are included in native bypass', async () => {
+test('receivers added during the check are left for the next run', async () => {
     let added;
     const f = await fixture({ duringProbe({ node }) { added = node(6, 'Batch', { image: ['2', 0] }); } });
     await f.run();
-    assert.equal(added.mode, 4);
+    assert.equal(added.mode, 0);
     assert.equal(f.receiver.mode, 4);
     assert.equal(f.submissions.at(-1).data.output['6'], undefined);
 });
@@ -334,23 +344,24 @@ test('failed main submission restores receivers added during the check', async (
     assert.equal(added.properties.crystools_empty_bypass_original_mode, undefined);
 });
 
-test('later probes cannot silently invalidate an earlier bypass decision', async () => {
+test('later probes use the same captured inputs as earlier probes', async () => {
     let checks = 0;
     const f = await fixture({ duringProbe({ source }) {
-        if (++checks === 2) source.inputs.seed = 2;
+        if (++checks === 2) source.promptInputs.seed = 2;
     } });
-    f.source.inputs.seed = 1;
+    f.source.promptInputs.seed = 1;
     f.node(6, 'Source');
     const second = f.node(7, SWITCH, { value: ['6', 0], on_false: ['6', 0] });
     second.widgets = [{ name: 'empty_action', value: 'bypass' }];
     f.node(8, 'Output', { image: ['7', 0] });
-    await assert.rejects(f.run(), /node 1 input seed/);
+    await f.run();
     assert.equal(checks, 2);
-    assert.equal(f.receiver.mode, 0);
-    assert.equal(f.submissions.length, 2);
+    assert.equal(f.receiver.mode, 4);
+    assert.equal(f.submissions.length, 3);
+    assert.equal(f.submissions.at(-1).data.output['1'].inputs.seed, 1);
 });
 
-test('a later control changed to omit is not used for native bypass', async () => {
+test('a later control changed to omit retains its captured setting for this run', async () => {
     let second;
     const f = await fixture({ duringProbe() { second.widgets[0].value = 'omit'; } });
     f.node(6, 'Source');
@@ -359,6 +370,60 @@ test('a later control changed to omit is not used for native bypass', async () =
     const sink = f.node(8, 'Output', { image: ['7', 0] });
     await f.run();
     assert.equal(f.receiver.mode, 4);
-    assert.equal(sink.mode, 0);
-    assert.equal(f.submissions.length, 2);
+    assert.equal(sink.mode, 4);
+    assert.equal(f.submissions.length, 3);
+});
+
+test('rewired receivers are bypassed only in the captured prompt', async () => {
+    const f = await fixture({ duringProbe({ receiver }) {
+        receiver.promptInputs.image = ['1', 0];
+    } });
+    await f.run();
+    assert.equal(f.receiver.mode, 0);
+    assert.equal(f.submissions.at(-1).data.output['3'], undefined);
+    assert.deepEqual(f.submissions.at(-1).data.output['4'].inputs.image, ['2', 0]);
+});
+
+test('manual mode edits during preflight survive successful submission', async () => {
+    const f = await fixture({ duringProbe({ receiver }) { receiver.mode = 2; } });
+    await f.run();
+    assert.equal(f.receiver.mode, 2);
+    assert.equal(f.submissions.at(-1).data.output['3'], undefined);
+});
+
+test('the next run captures the edited image input', async () => {
+    const f = await fixture({ duringProbe({ source }) { source.promptInputs.image = 'new.png'; } });
+    f.source.promptInputs.image = 'old.png';
+    await f.run();
+    assert.equal(f.submissions.at(-1).data.output['1'].inputs.image, 'old.png');
+    await f.run();
+    assert.equal(f.submissions.at(-1).data.output['1'].inputs.image, 'new.png');
+});
+
+test('captured bypass prefers the matching input slot for each output', async () => {
+    const f = await fixture();
+    f.node(6, 'Source');
+    f.receiver.promptInputs.other_image = ['6', 0];
+    f.receiver.outputs.push({ type: 'IMAGE', links: [] });
+    f.downstream.promptInputs.image = ['3', 1];
+    await f.run();
+    assert.deepEqual(f.submissions.at(-1).data.output['4'].inputs.image, ['6', 0]);
+});
+
+test('captured bypass removes unmatched outputs instead of inventing a connection', async () => {
+    const f = await fixture();
+    Object.defineProperty(f.downstream, 'inputs', { value: [{ name: 'image', type: 'LATENT', link: 1 }] });
+    await f.run();
+    assert.equal(f.submissions.at(-1).data.output['4'].inputs.image, undefined);
+});
+
+test('captured bypass resolves a chain of receivers without changing downstream modes', async () => {
+    const f = await fixture();
+    const next = f.node(6, 'Batch', { image: ['3', 0], trigger: ['2', 0] });
+    f.downstream.promptInputs.image = ['6', 0];
+    await f.run();
+    assert.equal(f.receiver.mode, 4);
+    assert.equal(next.mode, 4);
+    assert.equal(f.downstream.mode, 0);
+    assert.deepEqual(f.submissions.at(-1).data.output['4'].inputs.image, ['2', 0]);
 });
