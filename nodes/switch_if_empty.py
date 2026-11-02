@@ -1,9 +1,10 @@
 from numbers import Number
 
 from comfy_api.latest import io
+from comfy_execution.graph_utils import ExecutionBlocker
 
 from ..core import CATEGORY
-from ..core.optional import EMPTY
+from ..core.optional import EMPTY, BYPASS_ALLOWED
 from ..core.pipe import empty_value
 from ._names import CLASSES
 
@@ -17,7 +18,7 @@ class CSwitchAnyIfEmpty(io.ComfyNode):
             category=CATEGORY.MAIN.value + CATEGORY.SWITCH.value,
             description=('Check value for emptiness and select on_true or on_false. '
                          'Either branch may be disconnected. An empty selected branch '
-                         'either omits an optional argument or sets directly connected nodes to native bypass before submission.'),
+                         'either omits an optional argument or bypasses directly connected nodes during the same run.'),
             inputs=[
                 io.AnyType.Input('value', optional=True),
                 io.AnyType.Input('on_true', optional=True, lazy=True),
@@ -56,31 +57,74 @@ class CSwitchAnyIfEmpty(io.ComfyNode):
         return io.NodeOutput(selected, is_empty)
 
 
-class CSwitchAnyIfEmptyProbe(io.ComfyNode):
-    """Evaluate a switch before the frontend serializes native bypass routing."""
+class CEmptyBypassDecision(io.ComfyNode):
+    """Read the selected branch once within the submitted workflow."""
 
     @classmethod
     def define_schema(cls) -> io.Schema:
-        # A registered V3 parent carries cached metadata such as OUTPUT_NODE.
-        # Share the schema factory, but keep the probe's class metadata separate.
-        schema = CSwitchAnyIfEmpty.define_schema()
-        schema.node_id = 'CSWITCH_ANY_IF_EMPTY_PROBE'
-        schema.display_name = 'Switch Any (If Empty) internal preflight'
-        schema.is_output_node = True
-        schema.is_dev_only = True
-        return schema
+        return io.Schema(
+            node_id='CRYSTOOLS_EMPTY_BYPASS_DECISION',
+            is_dev_only=True,
+            is_input_list=True,
+            has_intermediate_output=True,
+            inputs=[io.AnyType.Input('value', optional=True)],
+            outputs=[io.Boolean.Output()],
+        )
 
     @classmethod
-    def check_lazy_status(cls, value: object = None, on_true: object = EMPTY,
-                          on_false: object = EMPTY, zero_is_empty: bool = False,
-                          empty_action: str = 'omit') -> list[str]:
-        return CSwitchAnyIfEmpty.check_lazy_status(
-            value, on_true, on_false, zero_is_empty, empty_action)
+    def execute(cls, value: list[object] | None = None) -> io.NodeOutput:
+        bypass = value is None or not value or all(item is EMPTY for item in value)
+        return io.NodeOutput(bypass, ui={'crystools_empty_branch': [bypass]})
+
+
+class CEmptyBypassRoute(io.ComfyNode):
+    """Let native lazy evaluation request only the selected connection."""
 
     @classmethod
-    def execute(cls, value: object = None, on_true: object = EMPTY,
-                on_false: object = EMPTY, zero_is_empty: bool = False,
-                empty_action: str = 'omit') -> io.NodeOutput:
-        result = CSwitchAnyIfEmpty.execute(value, on_true, on_false, zero_is_empty, empty_action)
-        return io.NodeOutput(result[0], result[1],
-                             ui={'crystools_empty_branch': [result[0] is EMPTY]})
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id='CRYSTOOLS_EMPTY_BYPASS_ROUTE',
+            is_dev_only=True,
+            is_input_list=True,
+            inputs=[
+                io.Boolean.Input('block', default=False),
+                io.Boolean.Input('has_passthrough', default=False),
+                io.Boolean.Input('guard', default=False),
+                *[io.Boolean.Input(f'condition_{index}', optional=True, force_input=True)
+                  for index in range(100)],
+                io.AnyType.Input('normal', optional=True, lazy=True),
+                io.AnyType.Input('passthrough', optional=True, lazy=True),
+            ],
+            outputs=[io.AnyType.Output(is_output_list=True)],
+        )
+
+    @classmethod
+    def check_lazy_status(cls, block: list[bool],
+                          has_passthrough: list[bool], guard: list[bool],
+                          normal: list[object] | None = None,
+                          passthrough: list[object] | None = None,
+                          **conditions: list[bool]) -> list[str]:
+        bypass = any(state for stream in conditions.values() for state in stream)
+        if guard[0]:
+            return []
+        if bypass and (block[0] or not has_passthrough[0]):
+            return []
+        selected = passthrough if bypass else normal
+        unresolved = selected is None or (isinstance(selected, tuple)
+                                         and len(selected) == 1 and selected[0] is None)
+        return ['passthrough' if bypass else 'normal'] if unresolved else []
+
+    @classmethod
+    def execute(cls, block: list[bool],
+                has_passthrough: list[bool], guard: list[bool],
+                normal: list[object] | None = None,
+                passthrough: list[object] | None = None,
+                **conditions: list[bool]) -> io.NodeOutput:
+        bypass = any(state for stream in conditions.values() for state in stream)
+        if guard[0]:
+            return io.NodeOutput([ExecutionBlocker(None) if bypass else BYPASS_ALLOWED])
+        if bypass and block[0]:
+            # This blocker stays at the receiver; its consumers use passthrough routes.
+            return io.NodeOutput([ExecutionBlocker(None)])
+        selected = passthrough if bypass else normal
+        return io.NodeOutput([EMPTY] if selected is None else selected)

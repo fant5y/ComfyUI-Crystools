@@ -194,30 +194,27 @@ class SwitchSelection(unittest.TestCase):
             self.assertIn(name, inputs['optional'])
             self.assertTrue(inputs['optional'][name][1]['lazy'])
 
-    def test_native_bypass_probe_reports_either_missing_branch(self):
-        probe = importlib.import_module(
-            'crystools_test.nodes.switch_if_empty').CSwitchAnyIfEmptyProbe
-        self.assertTrue(probe.define_schema().is_output_node)
-        self.assertTrue(probe.define_schema().is_dev_only)
+    def test_native_bypass_decision_reads_the_existing_switch_result(self):
+        decision = importlib.import_module(
+            'crystools_test.nodes.switch_if_empty').CEmptyBypassDecision
+        self.assertFalse(decision.define_schema().is_output_node)
         for value, branch in ((None, 'on_true'), ('present', 'on_false')):
             with self.subTest(branch=branch):
-                result = probe.execute(value=value, empty_action='bypass')
+                selected = self.switch.execute(value=value, empty_action='bypass')
+                result = decision.execute(value=[selected[0]])
                 self.assertEqual(result.ui['crystools_empty_branch'], [True])
-                self.assertIs(result[0], self.module.EMPTY)
-                result = probe.execute(value=value, empty_action='bypass', **{branch: 'valid'})
+                selected = self.switch.execute(value=value, empty_action='bypass', **{branch: 'valid'})
+                result = decision.execute(value=[selected[0]])
                 self.assertEqual(result.ui['crystools_empty_branch'], [False])
-                self.assertEqual(result[0], 'valid')
 
-    def test_probe_is_an_output_after_switch_registration(self):
-        probe = importlib.import_module(
-            'crystools_test.nodes.switch_if_empty').CSwitchAnyIfEmptyProbe
-        self.switch.GET_SCHEMA()
-        probe.GET_SCHEMA()
-        self.assertFalse(self.switch.OUTPUT_NODE)
-        self.assertTrue(probe.OUTPUT_NODE)
-        self.assertFalse(self.switch.DEV_ONLY)
-        self.assertTrue(probe.DEV_ONLY)
-        self.assertEqual(probe.check_lazy_status(value=None, on_true=None), ['on_true'])
+    def test_bypass_route_preserves_the_selected_stream(self):
+        route = importlib.import_module(
+            'crystools_test.nodes.switch_if_empty').CEmptyBypassRoute
+        inputs = dict(block=[False], guard=[False], has_passthrough=[True], condition_0=[True])
+        self.assertEqual(route.check_lazy_status(normal=(None,), passthrough=(None,), **inputs),
+                         ['passthrough'])
+        stream = [object(), object()]
+        self.assertIs(route.execute(passthrough=stream, **inputs)[0], stream)
 
     def test_is_empty_boolean_is_second_output(self):
         self.switch.INPUT_TYPES()

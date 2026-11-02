@@ -8,12 +8,15 @@ import execution
 
 class _EmptyInput(Enum):
     EMPTY = 'crystools_optional_argument_absent'
+    BYPASS_ALLOWED = 'crystools_receiver_enabled'
 
     def __repr__(self) -> str:
-        return 'EMPTY'
+        return self.name
 
 
 EMPTY = _EmptyInput.EMPTY
+BYPASS_ALLOWED = _EmptyInput.BYPASS_ALLOWED
+BYPASS_GUARD = '__crystools_empty_bypass_guard'
 _OMITTED = 'crystools_omitted_inputs'
 
 
@@ -27,6 +30,12 @@ def install_optional_input_hook() -> None:
     @wraps(original_inputs)
     def get_input_data(inputs, class_def, unique_id, *args, **kwargs):
         data, missing, metadata = original_inputs(inputs, class_def, unique_id, *args, **kwargs)
+        guard = data.get(BYPASS_GUARD)
+        if guard and all(item is BYPASS_ALLOWED for item in guard):
+            # The private dependency orders even lazy/raw-link output nodes.
+            # Remove its allow marker before calling the receiver's own methods.
+            del data[BYPASS_GUARD]
+            missing.pop(BYPASS_GUARD, None)
         marked = {name for name, stream in data.items() if any(item is EMPTY for item in stream)}
         if not marked:
             return data, missing, metadata

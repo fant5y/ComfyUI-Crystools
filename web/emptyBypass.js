@@ -2,254 +2,238 @@ import { app } from '../../scripts/app.js';
 import { api } from '../../scripts/api.js';
 
 const SWITCH = 'CSWITCH_ANY_IF_EMPTY';
-const PROBE = 'CSWITCH_ANY_IF_EMPTY_PROBE';
+const DECISION = 'CRYSTOOLS_EMPTY_BYPASS_DECISION';
+const ROUTE = 'CRYSTOOLS_EMPTY_BYPASS_ROUTE';
 const OWNED_MODE = 'crystools_empty_bypass_original_mode';
-const outputClasses = new Set();
+const GUARD = '__crystools_empty_bypass_guard';
+const contexts = new WeakMap();
+let capture;
+let serializing = 0;
 
-function graphNodes(graph, prefix = '') {
-    const result = [];
-    for (const node of graph.nodes ?? graph._nodes ?? []) {
-        const id = `${prefix}${node.id}`;
-        result.push({ node, id });
-        if (node.subgraph) result.push(...graphNodes(node.subgraph, `${id}:`));
-    }
-    return result;
-}
-
-function ancestorPrompt(output, ids, replaceSwitches = true) {
-    const result = {};
-    function visit(id) {
-        if (result[id]) return;
-        const entry = output[id];
-        if (!entry) throw new Error(`Crystools bypass: missing upstream node ${id}`);
-        // Only class_type changes. Inputs may contain frontend reactive proxies.
-        result[id] = { ...entry };
-        for (const value of Object.values(entry.inputs)) {
-            if (Array.isArray(value) && value.length === 2 &&
-                typeof value[0] === 'string' && Number.isInteger(value[1]) && output[value[0]]) {
-                visit(value[0]);
-            }
-        }
-    }
-    ids.forEach(visit);
-    if (replaceSwitches) {
-        for (const id of ids) result[id].class_type = PROBE;
-    }
-    return result;
-}
-
-function orderedControls(output, controls) {
-    const remaining = new Set(controls.map(({ id }) => id));
-    const ordered = [];
-    function visit(control) {
-        if (!remaining.delete(control.id)) return;
-        const ancestors = ancestorPrompt(output, [control.id], false);
-        for (const candidate of controls) {
-            if (candidate.id !== control.id && ancestors[candidate.id]) visit(candidate);
-        }
-        ordered.push(control);
-    }
-    controls.forEach(visit);
-    return ordered;
+function graphNodes(graph) {
+    return (graph.nodes ?? graph._nodes ?? []).flatMap(node =>
+        [node, ...(node.subgraph ? graphNodes(node.subgraph) : [])]);
 }
 
 function slotSignature(node) {
-    return JSON.stringify((node.inputs ?? []).map((input, index) => {
-        const link = node.getInputLink?.(index);
-        return [input.name, input.type, input.link ?? input.linkId,
-            link?.origin_id, link?.origin_slot];
-    }));
+    return JSON.stringify((node.inputs ?? []).map(input =>
+        [input.name, input.type, input.link ?? input.linkId]));
 }
 
-function bypassPrompt(baseline, bypassed, routing) {
-    const prompt = JSON.parse(JSON.stringify(baseline));
-    function resolve(value, type, visited = new Set()) {
-        if (!Array.isArray(value) || value.length !== 2 || !bypassed.has(String(value[0]))) return value;
-        const [id, slot] = value;
-        const key = `${id}:${slot}`;
-        if (visited.has(key)) throw new Error('Crystools bypass: circular bypass connection');
-        visited.add(key);
-        const node = routing.get(String(id));
-        const inputs = node.inputs;
-        const outputType = node.outputs[slot];
-        const valid = (input) => LiteGraph.isValidConnection(input.type, outputType) &&
-            LiteGraph.isValidConnection(input.type, type);
-        // Match ComfyUI's native bypass slot selection, including wildcard receivers.
-        let index;
-        if (type === '*' || type === '') index = inputs.length > slot ? slot : 0;
-        else if (inputs[slot] && valid(inputs[slot])) index = slot;
-        else {
-            index = inputs.findIndex(input => input.type === type);
-            if (index === -1) index = inputs.findIndex(valid);
-        }
-        const input = inputs[index];
-        if (!input?.connected) return undefined;
-        return resolve(baseline.output[id]?.inputs[input.name], input.type, visited);
+function restoreModes(graph) {
+    for (const node of graphNodes(graph)) {
+        if (node.properties?.[OWNED_MODE] === undefined) continue;
+        if (node.mode === 4) node.mode = node.properties[OWNED_MODE];
+        delete node.properties[OWNED_MODE];
     }
-    for (const [id, entry] of Object.entries(prompt.output)) {
-        if (bypassed.has(id)) {
-            delete prompt.output[id];
-            continue;
-        }
-        for (const [name, value] of Object.entries(entry.inputs)) {
-            const type = routing.get(id)?.inputs.find(input => input.name === name)?.type;
-            const resolved = resolve(value, type);
-            if (resolved === undefined) delete entry.inputs[name];
-            else entry.inputs[name] = resolved;
-        }
+}
+
+function compileRoutes(data, dtos, graph) {
+    const source = data.output;
+    const controls = new Map();
+    for (const [id, entry] of Object.entries(source)) {
+        const switches = Object.values(entry.inputs).filter(value =>
+            Array.isArray(value) && value.length === 2 && value[1] === 0 &&
+            source[value[0]]?.class_type === SWITCH &&
+            source[value[0]].inputs.empty_action === 'bypass').map(value => value[0]);
+        if (switches.length) controls.set(id, [...new Set(switches)]);
     }
-    // Keep history's workflow modes consistent with the submitted prompt.
-    const definitions = prompt.workflow.definitions?.subgraphs ?? [];
-    function mark(workflow, prefix = '') {
-        for (const node of workflow.nodes ?? []) {
-            const id = `${prefix}${node.id}`;
-            if (bypassed.has(id)) {
-                node.properties ??= {};
-                node.properties[OWNED_MODE] = node.mode;
-                node.mode = 4;
+    if (!controls.size) return data;
+    if (!dtos || [...controls.keys()].some(id => !dtos.get(id)?.resolveInput)) {
+        throw new Error('Crystools bypass: ComfyUI did not provide native connection routing. Reload the frontend.');
+    }
+
+    const prompt = JSON.parse(JSON.stringify(data));
+    const decisions = new Map();
+    const receivers = new Map();
+    function addNode(kind, parts, classType, inputs) {
+        const base = `__crystools_${encodeURIComponent(JSON.stringify([kind, ...parts]))}`;
+        let id = base;
+        for (let suffix = 1; Object.hasOwn(prompt.output, id); suffix++) id = `${base}_${suffix}`;
+        prompt.output[id] = { class_type: classType, inputs };
+        return [id, 0];
+    }
+    for (const [id, switches] of controls) {
+        for (const switchId of switches) {
+            if (!decisions.has(switchId)) {
+                decisions.set(switchId, addNode('decision', [switchId], DECISION,
+                    { value: [switchId, 0] }));
             }
-            const inner = definitions.find(definition => definition.id === node.type);
-            if (inner) mark(inner, `${id}:`);
+        }
+        const node = dtos.get(id).node;
+        receivers.set(id, { node, signature: slotSignature(node), mode: node.mode,
+            decisions: switches.map(switchId => decisions.get(switchId)[0]) });
+    }
+    function route(id, parts, normal, passthrough, block = false, guard = false) {
+        const inputs = { block, guard, has_passthrough: passthrough !== undefined };
+        if (normal !== undefined) inputs.normal = normal;
+        if (passthrough !== undefined) inputs.passthrough = passthrough;
+        controls.get(id).forEach((switchId, index) => {
+            inputs[`condition_${index}`] = decisions.get(switchId);
+        });
+        return addNode('route', parts, ROUTE, inputs);
+    }
+
+    // Only the serializer's temporary DTOs change mode. Canvas nodes stay untouched.
+    const modes = [...controls.keys()].map(id => {
+        const dto = dtos.get(id);
+        return [dto, Object.getOwnPropertyDescriptor(dto, 'mode'), dto.mode];
+    });
+    try {
+        for (const [dto, , mode] of modes) {
+            Object.defineProperty(dto, 'mode', { value: mode, writable: true, configurable: true });
+        }
+        function routedValue(value, resolve, parts, bypassed = []) {
+            if (bypassed.length) {
+                const resolved = resolve();
+                value = resolved?.widgetInfo
+                    ? (Array.isArray(resolved.widgetInfo.value)
+                        ? { __value__: resolved.widgetInfo.value } : resolved.widgetInfo.value)
+                    : resolved ? [resolved.origin_id, resolved.origin_slot] : undefined;
+            }
+            if (!Array.isArray(value) || value.length !== 2 || !controls.has(value[0])) return value;
+            const upstream = value[0];
+            if (bypassed.includes(upstream)) throw new Error('Crystools bypass: circular connection');
+            const dto = dtos.get(upstream);
+            const previous = dto.mode;
+            let passthrough;
+            try {
+                dto.mode = 4;
+                passthrough = routedValue(value, resolve, parts, [...bypassed, upstream]);
+            } finally {
+                dto.mode = previous;
+            }
+            return route(upstream, ['output', ...parts, ...bypassed, upstream], value, passthrough);
+        }
+        for (const [id, entry] of Object.entries(source)) {
+            for (const [name, value] of Object.entries(entry.inputs)) {
+                if (!Array.isArray(value) || value.length !== 2 || !source[value[0]]) continue;
+                const dto = dtos.get(id);
+                const index = dto?.inputs.findIndex(input => input.name === name);
+                const normal = routedValue(value, () => dto.resolveInput(index), [id, name]);
+                // Guard all receiver dependencies, including output nodes that are execution roots.
+                prompt.output[id].inputs[name] = controls.has(id)
+                    ? route(id, ['input', id, name], normal, undefined, true) : normal;
+            }
+            if (controls.has(id)) {
+                if (Object.hasOwn(entry.inputs, GUARD)) {
+                    throw new Error(`Crystools bypass: reserved input already exists on node ${id}`);
+                }
+                prompt.output[id].inputs[GUARD] = route(id, ['guard', id], undefined, undefined, false, true);
+            }
+        }
+        for (const [switchId, decision] of decisions) {
+            const dto = dtos.get(switchId);
+            prompt.output[decision[0]].inputs.value = routedValue([switchId, 0],
+                () => dto.resolveOutput(0, '*', new Set()), ['decision', switchId]);
+        }
+    } finally {
+        for (const [dto, descriptor] of modes) {
+            if (descriptor) Object.defineProperty(dto, 'mode', descriptor);
+            else delete dto.mode;
         }
     }
-    mark(prompt.workflow);
+    contexts.set(prompt, { graph, receivers,
+        decisionIds: new Set([...decisions.values()].map(value => value[0])) });
     return prompt;
 }
 
-async function completedProbe(promptId) {
-    if (!promptId) throw new Error('Crystools bypass: preflight was not accepted');
-    let absentCount = 0;
-    for (;;) {
-        const response = await api.fetchApi(`/history/${encodeURIComponent(promptId)}`);
-        if (!response.ok) throw new Error('Crystools bypass: could not read preflight result');
-        const history = (await response.json())[promptId];
-        if (history) {
-            if (history.status?.status_str !== 'success') {
-                throw new Error('Crystools bypass preflight failed or was interrupted; main workflow was not queued');
-            }
-            return history.outputs;
-        }
-        const queueResponse = await api.fetchApi('/queue');
-        if (!queueResponse.ok) throw new Error('Crystools bypass: could not read queue');
-        const queue = await queueResponse.json();
-        const present = [...(queue.queue_running ?? []), ...(queue.queue_pending ?? [])]
-            .some(entry => entry[1] === promptId);
-        absentCount = present ? 0 : absentCount + 1;
-        if (absentCount >= 3) throw new Error('Crystools bypass preflight was removed from the queue');
-        await new Promise(resolve => setTimeout(resolve, 400));
+function showDecision(context, detail) {
+    const state = detail.output?.crystools_empty_branch?.[0];
+    if (typeof state !== 'boolean' || !context.decisionIds.has(detail.node)) return;
+    context.states.set(detail.node, state);
+    if (serializing || (app.rootGraph ?? app.graph) !== context.graph) return;
+    const groups = new Map();
+    for (const receiver of context.receivers.values()) {
+        const group = groups.get(receiver.node) ?? [];
+        group.push(receiver);
+        groups.set(receiver.node, group);
     }
+    for (const [node, receivers] of groups) {
+        const states = receivers.map(receiver =>
+            receiver.decisions.some(id => context.states.get(id) === true) ? true :
+                receiver.decisions.every(id => context.states.has(id)) ? false : undefined);
+        // A shared subgraph definition has one canvas mode for all its instances.
+        if (states.some(state => state === undefined || state !== states[0])) continue;
+        const saved = receivers[0];
+        if (!node.graph || slotSignature(node) !== saved.signature ||
+            (node.mode !== saved.mode && !(node.mode === 4 && node.properties?.[OWNED_MODE] === saved.mode))) continue;
+        node.properties ??= {};
+        if (states[0]) {
+            node.properties[OWNED_MODE] = saved.mode;
+            node.mode = 4;
+        } else if (node.properties[OWNED_MODE] !== undefined) {
+            node.mode = node.properties[OWNED_MODE];
+            delete node.properties[OWNED_MODE];
+        }
+    }
+    context.graph.setDirtyCanvas?.(true, true);
 }
 
 app.registerExtension({
     name: 'Crystools.SwitchAnyIfEmpty.NativeBypass',
     beforeRegisterNodeDef(nodeType, nodeData) {
-        if (nodeData.output_node) outputClasses.add(nodeData.name);
+        if (nodeData.name !== SWITCH) return;
+        const originalCreated = nodeType.prototype.onNodeCreated;
+        nodeType.prototype.onNodeCreated = function (...args) {
+            const result = originalCreated?.apply(this, args);
+            const widget = this.widgets?.find(widget => widget.name === 'empty_action');
+            if (widget) {
+                const serialize = widget.serializeValue;
+                widget.serializeValue = function (dto, ...args) {
+                    // ComfyUI supplies its native routing objects to widget serialization.
+                    if (capture && dto.nodesByExecutionId) capture.dtos = dto.nodesByExecutionId;
+                    return serialize ? serialize.call(this, dto, ...args) : this.value;
+                };
+            }
+            return result;
+        };
     },
     setup() {
-        const originalQueue = api.queuePrompt;
-        api.queuePrompt = async function (number, data, options, ...rest) {
-            const graph = app.rootGraph ?? app.graph;
-            const entries = graphNodes(graph);
-            const owned = entries.filter(({ node }) => node.properties?.[OWNED_MODE] !== undefined);
-            const isControl = ({ node }) => node.comfyClass === SWITCH &&
-                node.widgets?.find(widget => widget.name === 'empty_action')?.value === 'bypass';
-            if (!entries.some(isControl) && !owned.length) {
-                return originalQueue.call(this, number, data, options, ...rest);
-            }
-            const snapshot = new Map(owned.map(({ node }) => [node, {
-                mode: node.mode, original: node.properties[OWNED_MODE],
-            }]));
+        const originalSerialize = app.graphToPrompt;
+        app.graphToPrompt = async function (graph = app.rootGraph ?? app.graph, ...args) {
+            restoreModes(graph);
+            const previous = capture;
+            const current = {};
+            capture = current;
+            serializing++;
             try {
-                // Restore only modes owned by this extension before checking again.
-                for (const { node } of owned) {
-                    if (node.mode === 4) node.mode = node.properties[OWNED_MODE];
-                    delete node.properties[OWNED_MODE];
-                }
-                // Detach transport data before any preflight can execute or update widgets.
-                const baseline = JSON.parse(JSON.stringify(owned.length
-                    ? await app.graphToPrompt(graph) : data));
-                // Subgraph hosts are not executable nodes; their getInputLink resolves outputs.
-                const routing = new Map(entries.filter(({ id }) => baseline.output[id]).map(({ node, id }) => [id, {
-                    node, mode: node.mode, type: node.comfyClass, signature: slotSignature(node),
-                    inputs: (node.inputs ?? []).map((input, index) => ({
-                        name: input.name, type: input.type,
-                        connected: (node.getInputLink?.(index) ?? input.link ?? input.linkId) != null,
-                    })),
-                    outputs: (node.outputs ?? []).map(output => output.type),
-                }]));
-                const requested = options?.partialExecutionTargets?.map(String);
-                const roots = requested?.length ? requested :
-                    Object.keys(baseline.output).filter(id =>
-                        outputClasses.has(baseline.output[id].class_type));
-                const reachable = ancestorPrompt(baseline.output,
-                    roots.filter(id => baseline.output[id]), false);
-                const active = entries.filter(entry => isControl(entry) &&
-                    entry.node.mode !== 2 && entry.node.mode !== 4 && reachable[entry.id]);
-                const bypassed = new Set();
-                let prompt = baseline;
-                for (const { id } of orderedControls(baseline.output, active)) {
-                    const stageReachable = ancestorPrompt(prompt.output,
-                        roots.filter(root => prompt.output[root]), false);
-                    if (!stageReachable[id]) continue;
-                    const preflight = { workflow: prompt.workflow,
-                        output: ancestorPrompt(prompt.output, [id]) };
-                    // Check on the user's configured device, only as part of their Run.
-                    const queued = await originalQueue.call(this, number, preflight,
-                        { ...options, partialExecutionTargets: [id] }, ...rest);
-                    const results = await completedProbe(queued.prompt_id);
-                    const states = results[id]?.crystools_empty_branch;
-                    if (!Array.isArray(states) || !states.length ||
-                        !states.every(state => typeof state === 'boolean' && state === states[0])) {
-                        throw new Error(`Crystools bypass: node ${id} has no single empty-branch result`);
+                const data = await originalSerialize.call(this, graph, ...args);
+                return compileRoutes(data, current.dtos, graph);
+            } finally {
+                serializing--;
+                capture = previous;
+            }
+        };
+
+        const runs = new Map();
+        const pending = new Set();
+        api.addEventListener('executed', ({ detail }) => {
+            const context = runs.get(detail.prompt_id);
+            if (context) showDecision(context, detail);
+            else for (const request of pending) {
+                if (request.decisionIds.has(detail.node)) request.early.push(detail);
+            }
+        });
+        const originalQueue = api.queuePrompt;
+        api.queuePrompt = async function (number, data, ...args) {
+            const saved = contexts.get(data);
+            if (!saved) return originalQueue.call(this, number, data, ...args);
+            const context = { ...saved, states: new Map(), early: [] };
+            pending.add(context);
+            try {
+                const result = await originalQueue.call(this, number, data, ...args);
+                if (result.prompt_id) {
+                    runs.set(result.prompt_id, context);
+                    for (const detail of context.early) {
+                        if (detail.prompt_id === result.prompt_id) showDecision(context, detail);
                     }
-                    if (!states[0]) continue;
-                    // The captured API links already resolve reroutes and subgraph boundaries.
-                    for (const [targetId, target] of Object.entries(prompt.output)) {
-                        if (!Object.values(target.inputs).some(value => Array.isArray(value) &&
-                            value.length === 2 && String(value[0]) === id && value[1] === 0)) continue;
-                        const receiver = routing.get(targetId);
-                        if (!receiver || receiver.mode === 2 || receiver.mode === 4) continue;
-                        if (entries.filter(entry => entry.node === receiver.node).length > 1) {
-                            throw new Error(`Crystools bypass: receiver ${receiver.node.id} is inside a shared subgraph; ` +
-                                'its native mode affects every instance. Use a separate subgraph definition for this receiver.');
-                        }
-                        bypassed.add(targetId);
-                    }
-                    prompt = bypassPrompt(baseline, bypassed, routing);
-                }
-                const targets = requested?.length
-                    ? requested.filter(id => prompt.output[id])
-                    : Object.keys(prompt.output).filter(id =>
-                        outputClasses.has(prompt.output[id].class_type));
-                const finalOptions = requested?.length
-                    ? { ...options, partialExecutionTargets: targets } : options;
-                // Bypassing the last output is valid and needs no main job.
-                const result = !targets.length && bypassed.size ? { node_errors: {} }
-                    : await originalQueue.call(this, number, prompt, finalOptions, ...rest);
-                // Mirror completed decisions only onto unchanged receivers in the original canvas.
-                if ((app.rootGraph ?? app.graph) === graph) {
-                    const current = graphNodes(graph);
-                    for (const id of bypassed) {
-                        const saved = routing.get(id);
-                        const node = saved.node;
-                        if (!current.some(entry => entry.id === id && entry.node === node) ||
-                            node.mode !== saved.mode || node.comfyClass !== saved.type ||
-                            slotSignature(node) !== saved.signature) continue;
-                        node.properties ??= {};
-                        node.properties[OWNED_MODE] = node.mode;
-                        node.mode = 4;
-                    }
-                    graph.setDirtyCanvas?.(true, true);
+                    context.early.length = 0;
+                    if (runs.size > 64) runs.delete(runs.keys().next().value);
                 }
                 return result;
-            } catch (error) {
-                for (const [node, previous] of snapshot) {
-                    if (node.mode !== previous.original || node.properties?.[OWNED_MODE] !== undefined) continue;
-                    node.mode = previous.mode;
-                    node.properties[OWNED_MODE] = previous.original;
-                }
-                graph.setDirtyCanvas?.(true, true);
-                throw error;
+            } finally {
+                pending.delete(context);
             }
         };
     },
