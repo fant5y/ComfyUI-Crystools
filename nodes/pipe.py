@@ -68,11 +68,6 @@ def edit_pipe(pipe_source: list[object] | None, values: dict[str, object],
 
 class CPipeToAny(io.ComfyNode):
     @classmethod
-    def fingerprint_inputs(cls, **values: object) -> float:
-        # Workflow labels are hidden metadata, outside ComfyUI's input cache key.
-        return float('NaN')
-
-    @classmethod
     def define_schema(cls) -> io.Schema:
         return io.Schema(
             node_id=CLASSES.CPIPE_TO_ANY_NAME.value,
@@ -83,6 +78,7 @@ class CPipeToAny(io.ComfyNode):
                     CLASSES.CPIPE_ANY_TYPE.value, optional=True, raw_link=True),
                 *[io.AnyType.Input(f'any_{index}', optional=True, raw_link=True, lazy=True)
                   for index in range(1, PIPE_CAPACITY + 1)],
+                io.String.Input('_crystools_cache_context', optional=True),
             ],
             outputs=[io.Custom(CLASSES.CPIPE_ANY_TYPE.value).Output()],
             hidden=[io.Hidden.unique_id, io.Hidden.extra_pnginfo, io.Hidden.dynprompt],
@@ -90,7 +86,8 @@ class CPipeToAny(io.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, CPipeAny: list[object] | None = None, **values: object) -> io.NodeOutput:
+    def execute(cls, CPipeAny: list[object] | None = None,
+                _crystools_cache_context: str = '', **values: object) -> io.NodeOutput:
         descriptions = pipe_layout(cls.hidden)
         dynprompt = getattr(cls.hidden, 'dynprompt', None)
         if dynprompt is None:

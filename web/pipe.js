@@ -202,6 +202,30 @@ const resolveSource = (graph, link, context, visited, inputPath = new Set(), ina
     }
     return { node, index: link.origin_slot, context, visited, inactive: unavailable };
 };
+export const pipeCacheContext = (root, executionId) => {
+    const path = executionId.split(':');
+    const context = new Map();
+    let graph = root;
+    for (const id of path.slice(0, -1)) {
+        const host = graph._nodes.find(node => String(node.id) === id);
+        if (!host?.subgraph) {
+            throw new Error(`Crystools cache: missing subgraph ${id}`);
+        }
+        context.set(host.subgraph, host);
+        graph = host.subgraph;
+    }
+    const node = graph._nodes.find(node => String(node.id) === path[path.length - 1]);
+    if (!node) {
+        throw new Error(`Crystools cache: missing node ${executionId}`);
+    }
+    const properties = node.properties || {};
+    const layouts = properties['crystools_pipe_layouts'];
+    const layout = layouts?.[executionId] ?? properties['crystools_pipe_layout'] ?? [];
+    const enabled = node.type === SWITCH_ANY_AUTO ? node.inputs.map((slot, index) => [
+        slot.name, !resolveSource(graph, node.getInputLink(index), context, new Set())?.inactive,
+    ]) : undefined;
+    return JSON.stringify({ layout, enabled });
+};
 const describeOutput = (source) => {
     const { node, index, visited, context } = source;
     if (node.type === PIPE_FROM && index > 0) {

@@ -55,18 +55,16 @@ def _active_source(
 
 class CSwitchAnyAuto(io.ComfyNode):
     @classmethod
-    def fingerprint_inputs(cls, **values: object) -> float:
-        # The layout and mute/bypass state come from hidden workflow metadata.
-        return float('NaN')
-
-    @classmethod
     def define_schema(cls) -> io.Schema:
         return io.Schema(
             node_id=CLASSES.CSWITCH_ANY_AUTO_NAME.value,
             display_name=CLASSES.CSWITCH_ANY_AUTO_DESC.value,
             category=CATEGORY.MAIN.value + CATEGORY.SWITCH.value,
             description='Return the first non-empty input from top to bottom. Skip muted and bypassed sources.',
-            inputs=[io.AnyType.Input(f'any_{index}', optional=True, lazy=True) for index in range(1, 101)],
+            inputs=[
+                *[io.AnyType.Input(f'any_{index}', optional=True, lazy=True) for index in range(1, 101)],
+                io.String.Input('_crystools_cache_context', optional=True),
+            ],
             outputs=[io.AnyType.Output(display_name='any', is_output_list=True)],
             is_input_list=True,
             hidden=[io.Hidden.unique_id, io.Hidden.extra_pnginfo],

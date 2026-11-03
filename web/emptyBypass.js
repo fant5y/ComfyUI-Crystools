@@ -1,11 +1,14 @@
 import { app } from '../../scripts/app.js';
 import { api } from '../../scripts/api.js';
+import { pipeCacheContext } from './pipe.js';
 
 const SWITCH = 'CSWITCH_ANY_IF_EMPTY';
 const DECISION = 'CRYSTOOLS_EMPTY_BYPASS_DECISION';
 const ROUTE = 'CRYSTOOLS_EMPTY_BYPASS_ROUTE';
 const OWNED_MODE = 'crystools_empty_bypass_original_mode';
 const GUARD = '__crystools_empty_bypass_guard';
+const CACHE_CONTEXT = '_crystools_cache_context';
+const CACHE_CLASSES = new Set(['CSWITCH_ANY_AUTO', 'Pipe to/edit any [Crystools]']);
 const contexts = new WeakMap();
 let capture;
 let serializing = 0;
@@ -173,6 +176,8 @@ function showDecision(context, detail) {
 app.registerExtension({
     name: 'Crystools.SwitchAnyIfEmpty.NativeBypass',
     beforeRegisterNodeDef(nodeType, nodeData) {
+        // Supplied during submission; it is not a user-facing socket or widget.
+        if (CACHE_CLASSES.has(nodeData.name)) delete nodeData.input.optional?.[CACHE_CONTEXT];
         if (nodeData.name !== SWITCH) return;
         const originalCreated = nodeType.prototype.onNodeCreated;
         nodeType.prototype.onNodeCreated = function (...args) {
@@ -199,6 +204,11 @@ app.registerExtension({
             serializing++;
             try {
                 const data = await originalSerialize.call(this, graph, ...args);
+                for (const [id, entry] of Object.entries(data.output)) {
+                    if (CACHE_CLASSES.has(entry.class_type)) {
+                        entry.inputs[CACHE_CONTEXT] = pipeCacheContext(graph, id);
+                    }
+                }
                 return compileRoutes(data, current.dtos, graph);
             } finally {
                 serializing--;
