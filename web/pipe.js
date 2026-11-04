@@ -387,11 +387,11 @@ const describePipe = (node, visited = new Set(), context = displayContext(node.g
     }
     return identifyLayout(values);
 };
-const decorateSlot = (slot, value, output) => {
+const decorateSlot = (slot, value, output, typed = output) => {
     const fields = candidates(value);
     slot.label = output && fields.length ? [...new Set(fields.map(field => field.label))].join(' / ') :
         value?.label || slot.name;
-    slot.type = output && fields.every(field => field.type === value?.type) ? value?.type || '*' : '*';
+    slot.type = typed && fields.every(field => field.type === value?.type) ? value?.type || '*' : '*';
     slot.color_on = value?.color_on;
     slot.color_off = value?.color_off;
 };
@@ -432,7 +432,7 @@ const refreshNode = (node) => {
         }
     }
     slots.slice(1).forEach((slot, index) => {
-        decorateSlot(slot, values[index], !input);
+        decorateSlot(slot, values[index], !input, true);
         if (!input) {
             slot.links?.forEach(id => {
                 const link = node.graph?.links.get(id);

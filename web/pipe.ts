@@ -528,12 +528,14 @@ const describePipe = (
   return identifyLayout(values);
 };
 
-const decorateSlot = (slot: Slot, value: ValueDescription | undefined, output: boolean): void => {
+const decorateSlot = (
+  slot: Slot, value: ValueDescription | undefined, output: boolean, typed = output,
+): void => {
   // Labels change; input names remain the stable server keys any_1, any_2, ...
   const fields = candidates(value);
   slot.label = output && fields.length ? [...new Set(fields.map(field => field.label))].join(' / ') :
     value?.label || slot.name;
-  slot.type = output && fields.every(field => field.type === value?.type) ? value?.type || '*' : '*';
+  slot.type = typed && fields.every(field => field.type === value?.type) ? value?.type || '*' : '*';
   slot.color_on = value?.color_on;
   slot.color_off = value?.color_off;
 };
@@ -575,7 +577,7 @@ const refreshNode = (node: PipeNode): void => {
     }
   }
   slots.slice(1).forEach((slot, index) => {
-    decorateSlot(slot, values[index], !input);
+    decorateSlot(slot, values[index], !input, true);
     if (!input) {
       slot.links?.forEach(id => {
         const link = node.graph?.links.get(id);
