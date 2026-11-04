@@ -507,20 +507,21 @@ const describePipe = (
   const parent = resolveSource(node.graph, node.getInputLink(0), context, path);
   const values = parent && (isPipe(parent.node) || isSwitch(parent.node) && parent.index === 0) ?
     describePipe(parent.node, parent.visited, parent.context) : [];
-  if (node.type === PIPE_TO) {
-    node.inputs.slice(1).forEach((_slot, index) => {
-      const source = resolveSource(node.graph!, node.getInputLink(index + 1), context, path);
-      if (source) {
-        values[index] = replaceDescription(describeOutput(source), values[index]);
-      }
-    });
-  }
   if (!collectingTemplates && node.type === PIPE_TO) {
     const template = templateLayouts.get(node)?.get(contextKey(node, context)) || [];
     const declared = new Set(fieldKeys(identifyLayout(values)));
     template.forEach((value, index) => {
       if (!values[index] && value && !declared.has(fieldKeys([value])[0])) {
         values[index] = value;
+      }
+    });
+  }
+  if (node.type === PIPE_TO) {
+    node.inputs.slice(1).forEach((_slot, index) => {
+      const source = resolveSource(node.graph!, node.getInputLink(index + 1), context, path);
+      if (source) {
+        // An override replaces the value, not the inherited destination field.
+        values[index] ||= describeOutput(source);
       }
     });
   }

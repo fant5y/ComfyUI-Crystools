@@ -55,7 +55,7 @@ def edit_pipe(pipe_source: list[object] | None, values: dict[str, object],
         value = values.get(f'any_{index + 1}')
         if not empty_value(value):
             pipe[index] = value
-            description = descriptions[index] if index < len(descriptions) else None
+            description = layout[index] or (descriptions[index] if index < len(descriptions) else None)
             layout[index] = (
                 {key: item for key, item in description.items() if key != 'alternatives'}
                 if description else None
@@ -102,8 +102,7 @@ class CPipeToAny(io.ComfyNode):
                 continue
             upstream = dynprompt.get_node(value[0])
             if upstream['class_type'] == CLASSES.CPIPE_FROM_ANY_NAME.value and value[1] > 0:
-                # Carry the whole pipe so a retained fallback keeps its actual
-                # field identity when extracted and packed into another pipe.
+                # Carry the whole pipe to extract the selected value during expansion.
                 extracted[name] = int(value[1]) - 1
                 values[name] = [value[0], 0]
                 continue
@@ -184,18 +183,6 @@ class CPipeEditInternal(io.ComfyNode):
         for name, index in context.get('extracted', {}).items():
             source = values.get(name)
             values[name] = source[index] if source is not None and index < len(source) else None
-            position = int(name[4:]) - 1
-            actual_layout = getattr(source, 'layout', [])
-            if position < len(descriptions) and index < len(actual_layout) and actual_layout[index]:
-                actual = actual_layout[index]
-                declared = descriptions[position] or {}
-                candidates = [declared, *declared.get('alternatives', [])]
-                match = next((field for field in candidates
-                              if field.get('label') == actual['label']
-                              and str(field.get('type')) == str(actual['type'])), None)
-                descriptions[position] = dict(actual)
-                if match and 'occurrence' in match:
-                    descriptions[position]['occurrence'] = match['occurrence']
         return io.NodeOutput(edit_pipe(CPipeAny, values, descriptions))
 
 
