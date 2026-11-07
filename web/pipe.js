@@ -3,7 +3,10 @@ const PIPE_TO = 'Pipe to/edit any [Crystools]';
 const PIPE_FROM = 'Pipe from any [Crystools]';
 const CAPACITY = 100;
 const SWITCH_ANY_AUTO = 'CSWITCH_ANY_AUTO';
+const SWITCH_ANY_IF_EMPTY = 'CSWITCH_ANY_IF_EMPTY';
+const PASS_ANY = 'Pass any [Crystools]';
 const isPipe = (node) => node.type === PIPE_TO || node.type === PIPE_FROM;
+const isSwitch = (node) => node.type === SWITCH_ANY_AUTO || node.type === SWITCH_ANY_IF_EMPTY;
 const pendingGraphs = new WeakSet();
 let templateLayouts = new WeakMap();
 let collectingTemplates = false;
@@ -82,6 +85,9 @@ const orderedInputs = (node) => {
     node.properties['crystools_input_order'] = order;
     return order.map(id => connected.find(slot => slot.id === id).index);
 };
+const branchInputs = (node) => node.type === SWITCH_ANY_IF_EMPTY ?
+    node.inputs.flatMap((slot, index) => ['on_true', 'on_false'].includes(slot.name) && slot.link !== null && slot.link !== undefined ? [index] : []) :
+    orderedInputs(node);
 const contextKey = (node, context) => {
     const path = [node.id];
     let graph = node.graph;
@@ -197,13 +203,41 @@ const resolveSource = (graph, link, context, visited, inputPath = new Set(), ina
     }
     return { node, index: link.origin_slot, context, visited, inactive: unavailable };
 };
+export const pipeCacheContext = (root, executionId) => {
+    const path = executionId.split(':');
+    const context = new Map();
+    let graph = root;
+    for (const id of path.slice(0, -1)) {
+        const host = graph._nodes.find(node => String(node.id) === id);
+        if (!host?.subgraph) {
+            throw new Error(`Crystools cache: missing subgraph ${id}`);
+        }
+        context.set(host.subgraph, host);
+        graph = host.subgraph;
+    }
+    const node = graph._nodes.find(candidate => String(candidate.id) === path[path.length - 1]);
+    if (!node) {
+        throw new Error(`Crystools cache: missing node ${executionId}`);
+    }
+    const properties = node.properties || {};
+    const layouts = properties['crystools_pipe_layouts'];
+    const layout = layouts?.[executionId] ?? properties['crystools_pipe_layout'] ?? [];
+    const enabled = node.type === SWITCH_ANY_AUTO ? node.inputs.map((slot, index) => [
+        slot.name, !resolveSource(graph, node.getInputLink(index), context, new Set())?.inactive,
+    ]) : undefined;
+    return JSON.stringify({ layout, enabled });
+};
 const describeOutput = (source) => {
     const { node, index, visited, context } = source;
     if (node.type === PIPE_FROM && index > 0) {
         return describePipe(node, visited, context)[index - 1];
     }
-    if (node.type === SWITCH_ANY_AUTO) {
+    if (isSwitch(node) && index === 0) {
         return describeSwitch(node, visited, context);
+    }
+    if (node.type === PASS_ANY && node.graph && !visited.has(contextKey(node, context))) {
+        const upstream = resolveSource(node.graph, node.getInputLink(0), context, new Set(visited).add(contextKey(node, context)));
+        return upstream ? describeOutput(upstream) : undefined;
     }
     const slot = node.outputs[index];
     if (!slot) {
@@ -224,7 +258,7 @@ const describeSwitch = (node, visited, context) => {
         return undefined;
     }
     const path = new Set(visited).add(contextKey(node, context));
-    const values = orderedInputs(node).sort((left, right) => left - right).map(index => {
+    const values = branchInputs(node).sort((left, right) => left - right).map(index => {
         const source = resolveSource(node.graph, node.getInputLink(index), context, path);
         return { description: source ? describeOutput(source) : undefined, inactive: source?.inactive };
     });
@@ -248,15 +282,37 @@ const refreshSwitchOutput = (node) => {
     return [output.label, output.type, output.color_on, output.color_off]
         .some((value, index) => value !== previous[index]);
 };
+const refreshPass = (node) => {
+    const input = node.inputs[0];
+    const output = node.outputs[0];
+    if (!input || !output || !node.graph) {
+        return;
+    }
+    const source = resolveSource(node.graph, node.getInputLink(0), displayContext(node.graph), new Set());
+    const value = source ? describeOutput(source) : undefined;
+    decorateSlot(input, value, false, true);
+    decorateSlot(output, value, true);
+    output.links?.forEach(id => {
+        const link = node.graph?.links.get(id);
+        if (link) {
+            link.type = output.type;
+        }
+    });
+    const size = node.computeSize();
+    if (size[0] > node.size[0]) {
+        node.setSize([size[0], node.size[1]]);
+    }
+};
 const pipeSources = (node, visited, context) => {
     if (!node.graph || visited.has(contextKey(node, context))) {
         return undefined;
     }
     const sources = [];
-    for (const index of orderedInputs(node)) {
+    for (const index of branchInputs(node)) {
         const source = resolveSource(node.graph, node.getInputLink(index), context, new Set(visited).add(contextKey(node, context)));
         if (!source || !(isPipe(source.node) && source.index === 0 ||
-            source.node.type === SWITCH_ANY_AUTO && pipeSources(source.node, source.visited, source.context)?.length)) {
+            isSwitch(source.node) && source.index === 0 &&
+                pipeSources(source.node, source.visited, source.context)?.length)) {
             return undefined;
         }
         sources.push(source);
@@ -324,18 +380,19 @@ const describePipe = (node, visited = new Set(), context = displayContext(node.g
         const sources = pipeSources(node, visited, context) || [];
         return mergeLayouts(sources.map(source => describePipe(source.node, source.visited, source.context)));
     }
+    if (node.type === SWITCH_ANY_IF_EMPTY) {
+        const values = [];
+        for (const source of pipeSources(node, visited, context) || []) {
+            describePipe(source.node, source.visited, source.context).forEach((value, index) => {
+                values[index] = replaceDescription(values[index], value);
+            });
+        }
+        return identifyLayout(values);
+    }
     const path = new Set(visited).add(contextKey(node, context));
     const parent = resolveSource(node.graph, node.getInputLink(0), context, path);
-    const values = parent && (isPipe(parent.node) || parent.node.type === SWITCH_ANY_AUTO) ?
+    const values = parent && (isPipe(parent.node) || isSwitch(parent.node) && parent.index === 0) ?
         describePipe(parent.node, parent.visited, parent.context) : [];
-    if (node.type === PIPE_TO) {
-        node.inputs.slice(1).forEach((_slot, index) => {
-            const source = resolveSource(node.graph, node.getInputLink(index + 1), context, path);
-            if (source) {
-                values[index] = replaceDescription(describeOutput(source), values[index]);
-            }
-        });
-    }
     if (!collectingTemplates && node.type === PIPE_TO) {
         const template = templateLayouts.get(node)?.get(contextKey(node, context)) || [];
         const declared = new Set(fieldKeys(identifyLayout(values)));
@@ -345,13 +402,21 @@ const describePipe = (node, visited = new Set(), context = displayContext(node.g
             }
         });
     }
+    if (node.type === PIPE_TO) {
+        node.inputs.slice(1).forEach((_slot, index) => {
+            const source = resolveSource(node.graph, node.getInputLink(index + 1), context, path);
+            if (source) {
+                values[index] || (values[index] = describeOutput(source));
+            }
+        });
+    }
     return identifyLayout(values);
 };
-const decorateSlot = (slot, value, output) => {
+const decorateSlot = (slot, value, output, typed = output) => {
     const fields = candidates(value);
     slot.label = output && fields.length ? [...new Set(fields.map(field => field.label))].join(' / ') :
         value?.label || slot.name;
-    slot.type = output && fields.every(field => field.type === value?.type) ? value?.type || '*' : '*';
+    slot.type = typed && fields.every(field => field.type === value?.type) ? value?.type || '*' : '*';
     slot.color_on = value?.color_on;
     slot.color_off = value?.color_off;
 };
@@ -392,7 +457,7 @@ const refreshNode = (node) => {
         }
     }
     slots.slice(1).forEach((slot, index) => {
-        decorateSlot(slot, values[index], !input);
+        decorateSlot(slot, values[index], !input, true);
         if (!input) {
             slot.links?.forEach(id => {
                 const link = node.graph?.links.get(id);
@@ -438,7 +503,7 @@ const templateTargets = (source, depth = 0) => {
     if (!node.graph || visited.has(contextKey(node, context))) {
         return [];
     }
-    if (node.type === SWITCH_ANY_AUTO) {
+    if (isSwitch(node) && source.index === 0) {
         return (pipeSources(node, visited, context) || []).flatMap(branch => templateTargets(branch, depth + 1));
     }
     if (!isPipe(node) || source.index !== 0) {
@@ -493,8 +558,21 @@ const collectTemplates = (root) => {
     }
 };
 const refresh = (node) => {
-    if (node.type === SWITCH_ANY_AUTO) {
+    if (node.type === PASS_ANY) {
+        refreshPass(node);
+    }
+    else if (node.type === SWITCH_ANY_AUTO) {
         refreshSwitch(node);
+    }
+    else if (node.type === SWITCH_ANY_IF_EMPTY) {
+        refreshSwitchOutput(node);
+        node.inputs.forEach((slot, index) => {
+            if (!['on_true', 'on_false'].includes(slot.name)) {
+                return;
+            }
+            const source = node.graph && resolveSource(node.graph, node.getInputLink(index), displayContext(node.graph), new Set());
+            decorateSlot(slot, source ? describeOutput(source) : undefined, false);
+        });
     }
     else {
         refreshNode(node);
@@ -511,7 +589,7 @@ const scheduleRefresh = (graph) => {
             collectTemplates(root);
             for (const owner of graphsOf(root)) {
                 observeGraph(owner);
-                owner._nodes.filter(node => isPipe(node) || node.type === SWITCH_ANY_AUTO).forEach(refresh);
+                owner._nodes.filter(node => isPipe(node) || isSwitch(node) || node.type === PASS_ANY).forEach(refresh);
                 owner.setDirtyCanvas(true, true);
             }
         }
@@ -572,14 +650,18 @@ app.registerExtension({
         scheduleRefresh(app.rootGraph);
     },
     beforeRegisterNodeDef(nodeType, nodeData) {
-        if (![PIPE_TO, PIPE_FROM, SWITCH_ANY_AUTO].includes(nodeData.name)) {
+        if (![PIPE_TO, PIPE_FROM, SWITCH_ANY_AUTO, SWITCH_ANY_IF_EMPTY, PASS_ANY].includes(nodeData.name)) {
             return;
         }
         const prototype = nodeType.prototype;
         const draw = prototype.onDrawForeground;
         prototype.onDrawForeground = function (...args) {
             const result = draw?.apply(this, args);
-            const changed = this.type === SWITCH_ANY_AUTO ? refreshSwitchOutput(this) : refreshGroupLabel(this);
+            if (this.type === PASS_ANY) {
+                refreshPass(this);
+                return result;
+            }
+            const changed = isSwitch(this) ? refreshSwitchOutput(this) : refreshGroupLabel(this);
             if (changed) {
                 scheduleRefresh(this.graph);
             }
