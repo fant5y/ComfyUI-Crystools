@@ -30,6 +30,9 @@ class CLASSES(Enum):
 
     CSWITCH_ANY_AUTO_NAME = 'CSWITCH_ANY_AUTO'
     CSWITCH_ANY_AUTO_DESC = prefix + 'Switch Any (Auto)'
+
+    CPASS_ANY_NAME = 'Pass any [Crystools]'
+    CPASS_ANY_DESC = prefix + 'Pass any'
     CSWITCH_ANY_IF_EMPTY_NAME = 'CSWITCH_ANY_IF_EMPTY'
     CSWITCH_ANY_IF_EMPTY_DESC = prefix + 'Switch Any (If Empty)'
 

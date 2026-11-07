@@ -4,6 +4,7 @@ const PIPE_FROM = 'Pipe from any [Crystools]';
 const CAPACITY = 100;
 const SWITCH_ANY_AUTO = 'CSWITCH_ANY_AUTO';
 const SWITCH_ANY_IF_EMPTY = 'CSWITCH_ANY_IF_EMPTY';
+const PASS_ANY = 'Pass any [Crystools]';
 const isPipe = (node) => node.type === PIPE_TO || node.type === PIPE_FROM;
 const isSwitch = (node) => node.type === SWITCH_ANY_AUTO || node.type === SWITCH_ANY_IF_EMPTY;
 const pendingGraphs = new WeakSet();
@@ -214,7 +215,7 @@ export const pipeCacheContext = (root, executionId) => {
         context.set(host.subgraph, host);
         graph = host.subgraph;
     }
-    const node = graph._nodes.find(node => String(node.id) === path[path.length - 1]);
+    const node = graph._nodes.find(candidate => String(candidate.id) === path[path.length - 1]);
     if (!node) {
         throw new Error(`Crystools cache: missing node ${executionId}`);
     }
@@ -233,6 +234,10 @@ const describeOutput = (source) => {
     }
     if (isSwitch(node) && index === 0) {
         return describeSwitch(node, visited, context);
+    }
+    if (node.type === PASS_ANY && node.graph && !visited.has(contextKey(node, context))) {
+        const upstream = resolveSource(node.graph, node.getInputLink(0), context, new Set(visited).add(contextKey(node, context)));
+        return upstream ? describeOutput(upstream) : undefined;
     }
     const slot = node.outputs[index];
     if (!slot) {
@@ -277,6 +282,27 @@ const refreshSwitchOutput = (node) => {
     return [output.label, output.type, output.color_on, output.color_off]
         .some((value, index) => value !== previous[index]);
 };
+const refreshPass = (node) => {
+    const input = node.inputs[0];
+    const output = node.outputs[0];
+    if (!input || !output || !node.graph) {
+        return;
+    }
+    const source = resolveSource(node.graph, node.getInputLink(0), displayContext(node.graph), new Set());
+    const value = source ? describeOutput(source) : undefined;
+    decorateSlot(input, value, false, true);
+    decorateSlot(output, value, true);
+    output.links?.forEach(id => {
+        const link = node.graph?.links.get(id);
+        if (link) {
+            link.type = output.type;
+        }
+    });
+    const size = node.computeSize();
+    if (size[0] > node.size[0]) {
+        node.setSize([size[0], node.size[1]]);
+    }
+};
 const pipeSources = (node, visited, context) => {
     if (!node.graph || visited.has(contextKey(node, context))) {
         return undefined;
@@ -286,7 +312,7 @@ const pipeSources = (node, visited, context) => {
         const source = resolveSource(node.graph, node.getInputLink(index), context, new Set(visited).add(contextKey(node, context)));
         if (!source || !(isPipe(source.node) && source.index === 0 ||
             isSwitch(source.node) && source.index === 0 &&
-            pipeSources(source.node, source.visited, source.context)?.length)) {
+                pipeSources(source.node, source.visited, source.context)?.length)) {
             return undefined;
         }
         sources.push(source);
@@ -380,7 +406,6 @@ const describePipe = (node, visited = new Set(), context = displayContext(node.g
         node.inputs.slice(1).forEach((_slot, index) => {
             const source = resolveSource(node.graph, node.getInputLink(index + 1), context, path);
             if (source) {
-                // An override replaces the value, not the inherited destination field.
                 values[index] || (values[index] = describeOutput(source));
             }
         });
@@ -533,7 +558,10 @@ const collectTemplates = (root) => {
     }
 };
 const refresh = (node) => {
-    if (node.type === SWITCH_ANY_AUTO) {
+    if (node.type === PASS_ANY) {
+        refreshPass(node);
+    }
+    else if (node.type === SWITCH_ANY_AUTO) {
         refreshSwitch(node);
     }
     else if (node.type === SWITCH_ANY_IF_EMPTY) {
@@ -561,7 +589,7 @@ const scheduleRefresh = (graph) => {
             collectTemplates(root);
             for (const owner of graphsOf(root)) {
                 observeGraph(owner);
-                owner._nodes.filter(node => isPipe(node) || isSwitch(node)).forEach(refresh);
+                owner._nodes.filter(node => isPipe(node) || isSwitch(node) || node.type === PASS_ANY).forEach(refresh);
                 owner.setDirtyCanvas(true, true);
             }
         }
@@ -622,13 +650,17 @@ app.registerExtension({
         scheduleRefresh(app.rootGraph);
     },
     beforeRegisterNodeDef(nodeType, nodeData) {
-        if (![PIPE_TO, PIPE_FROM, SWITCH_ANY_AUTO, SWITCH_ANY_IF_EMPTY].includes(nodeData.name)) {
+        if (![PIPE_TO, PIPE_FROM, SWITCH_ANY_AUTO, SWITCH_ANY_IF_EMPTY, PASS_ANY].includes(nodeData.name)) {
             return;
         }
         const prototype = nodeType.prototype;
         const draw = prototype.onDrawForeground;
         prototype.onDrawForeground = function (...args) {
             const result = draw?.apply(this, args);
+            if (this.type === PASS_ANY) {
+                refreshPass(this);
+                return result;
+            }
             const changed = isSwitch(this) ? refreshSwitchOutput(this) : refreshGroupLabel(this);
             if (changed) {
                 scheduleRefresh(this.graph);

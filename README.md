@@ -588,6 +588,14 @@ You can concatenate any value (it will try to convert it to a string and show th
 
 ---
 
+## Pass Any
+
+**Pass any** has one input and one output. Connect an image, model, conditioning,
+pipe, or another value and it passes through unchanged. Both sockets show the
+connected output's label, and the output takes its type. They reset when the
+input is disconnected.
+Search for `Pass any` in the `crystools` category.
+
 ## Switch
 A set of nodes to switch between flows.  
 

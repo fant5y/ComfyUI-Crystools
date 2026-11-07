@@ -5,6 +5,7 @@ const PIPE_FROM = 'Pipe from any [Crystools]';
 const CAPACITY = 100;
 const SWITCH_ANY_AUTO = 'CSWITCH_ANY_AUTO';
 const SWITCH_ANY_IF_EMPTY = 'CSWITCH_ANY_IF_EMPTY';
+const PASS_ANY = 'Pass any [Crystools]';
 
 interface Slot {
   name: string;
@@ -332,7 +333,7 @@ export const pipeCacheContext = (root: PipeGraph, executionId: string): string =
     context.set(host.subgraph, host);
     graph = host.subgraph;
   }
-  const node = graph._nodes.find(node => String(node.id) === path[path.length - 1]);
+  const node = graph._nodes.find(candidate => String(candidate.id) === path[path.length - 1]);
   if (!node) {
     throw new Error(`Crystools cache: missing node ${executionId}`);
   }
@@ -353,6 +354,11 @@ const describeOutput = (source: Source): ValueDescription | undefined => {
   }
   if (isSwitch(node) && index === 0) {
     return describeSwitch(node, visited, context);
+  }
+  if (node.type === PASS_ANY && node.graph && !visited.has(contextKey(node, context))) {
+    const upstream = resolveSource(node.graph, node.getInputLink(0), context,
+      new Set(visited).add(contextKey(node, context)));
+    return upstream ? describeOutput(upstream) : undefined;
   }
   const slot = node.outputs[index];
   if (!slot) {
@@ -400,6 +406,28 @@ const refreshSwitchOutput = (node: PipeNode): boolean => {
   });
   return [output.label, output.type, output.color_on, output.color_off]
     .some((value, index) => value !== previous[index]);
+};
+
+const refreshPass = (node: PipeNode): void => {
+  const input = node.inputs[0];
+  const output = node.outputs[0];
+  if (!input || !output || !node.graph) {
+    return;
+  }
+  const source = resolveSource(node.graph, node.getInputLink(0), displayContext(node.graph), new Set());
+  const value = source ? describeOutput(source) : undefined;
+  decorateSlot(input, value, false, true);
+  decorateSlot(output, value, true);
+  output.links?.forEach(id => {
+    const link = node.graph?.links.get(id);
+    if (link) {
+      link.type = output.type;
+    }
+  });
+  const size = node.computeSize();
+  if (size[0] > node.size[0]) {
+    node.setSize([size[0], node.size[1]]);
+  }
 };
 
 // eslint-disable-next-line complexity
@@ -687,7 +715,9 @@ const collectTemplates = (root: PipeGraph): void => {
 };
 
 const refresh = (node: PipeNode): void => {
-  if (node.type === SWITCH_ANY_AUTO) {
+  if (node.type === PASS_ANY) {
+    refreshPass(node);
+  } else if (node.type === SWITCH_ANY_AUTO) {
     refreshSwitch(node);
   } else if (node.type === SWITCH_ANY_IF_EMPTY) {
     refreshSwitchOutput(node);
@@ -716,7 +746,7 @@ const scheduleRefresh = (graph: PipeGraph | undefined): void => {
       collectTemplates(root);
       for (const owner of graphsOf(root)) {
         observeGraph(owner);
-        owner._nodes.filter(node => isPipe(node) || isSwitch(node)).forEach(refresh);
+        owner._nodes.filter(node => isPipe(node) || isSwitch(node) || node.type === PASS_ANY).forEach(refresh);
         owner.setDirtyCanvas(true, true);
       }
     } finally {
@@ -781,13 +811,17 @@ app.registerExtension({
     scheduleRefresh(app.rootGraph);
   },
   beforeRegisterNodeDef(nodeType: {prototype: PipeNode}, nodeData: {name: string}): void {
-    if (![PIPE_TO, PIPE_FROM, SWITCH_ANY_AUTO, SWITCH_ANY_IF_EMPTY].includes(nodeData.name)) {
+    if (![PIPE_TO, PIPE_FROM, SWITCH_ANY_AUTO, SWITCH_ANY_IF_EMPTY, PASS_ANY].includes(nodeData.name)) {
       return;
     }
     const prototype = nodeType.prototype;
     const draw = prototype.onDrawForeground;
     prototype.onDrawForeground = function(this: PipeNode, ...args: unknown[]): unknown {
       const result = draw?.apply(this, args);
+      if (this.type === PASS_ANY) {
+        refreshPass(this);
+        return result;
+      }
       const changed = isSwitch(this) ? refreshSwitchOutput(this) : refreshGroupLabel(this);
       if (changed) {
         scheduleRefresh(this.graph);
