@@ -45,7 +45,7 @@ class Node {
   }
   getInputLink(slot) {
     if (!this.graph) throw Error('NullGraphError');
-    return this.graph.links.get(this.liveInputLinks?.get(slot) ?? this.inputs[slot]?.link) || null;
+    return this.graph.links.get(this.inputs[slot]?.link) || null;
   }
   addInput(name,type) { this.inputs.push({name,type,link:null}); }
   addOutput(name,type) { this.outputs.push({name,type,links:[]}); }
@@ -61,7 +61,7 @@ class FromNode extends Node { constructor(owner){super(FROM,owner);} }
 let nextLink = 1;
 function connect(source,sourceSlot,target,targetSlot) {
   const id = nextLink++;
-  target.graph.links.set(id,{id,origin_id:source.id,origin_slot:sourceSlot,type:source.outputs[sourceSlot].type});
+  target.graph.links.set(id,{id,origin_id:source.id,origin_slot:sourceSlot,target_id:target.id,target_slot:targetSlot,type:source.outputs[sourceSlot].type});
   target.inputs[targetSlot].link = id;
   source.outputs[sourceSlot].links.push(id);
   target.onConnectionsChange?.(1,targetSlot,true);
@@ -256,8 +256,10 @@ const flush = () => new Promise(resolve=>setImmediate(resolve));
   assert.equal(outside.outputs[3].label,'Photo');
   assert.equal(secondOutside.outputs[1].label,'prompt');
   // A closed subgraph must use its live input link and its exported bundle label.
-  secondHost.liveInputLinks = new Map([[0, secondHost.inputs[0].link]]);
+  const secondHostLink = secondHost.inputs[0].link;
   secondHost.inputs[0].link = null;
+  // Native SubgraphNode.getInputLink follows an inner output, not an outer input.
+  secondHost.getInputLink = () => { throw new TypeError('Cannot read properties of undefined (reading getLinks)'); };
   secondHost.outputs[0].label = 'ILLUSTRIOUS_PONY';
   const closedSwitch = new FirstNode();
   connect(secondHost,0,closedSwitch,0);
@@ -265,6 +267,13 @@ const flush = () => new Promise(resolve=>setImmediate(resolve));
   assert.equal(closedSwitch.inputs[0].label,'ILLUSTRIOUS_PONY');
   assert.equal(secondOutside.outputs[1].label,'prompt');
   assert.equal(closedSwitch.properties.crystools_pipe_layout[0]?.label,'prompt');
+  const freshExtractor = new FromNode(child);
+  connect(inside,0,freshExtractor,0);
+  await flush();
+  assert.equal(freshExtractor.outputs[7].label,'inner_image');
+  disconnect(inside,0,freshExtractor,0);
+  await flush();
+  assert.equal(freshExtractor.outputs.length,7);
   const newWidth = new Node('Width');
   newWidth.outputs[0] = {name:'width',type:'INT',links:[]};
   disconnect(text,0,secondTo,1);
@@ -278,8 +287,8 @@ const flush = () => new Promise(resolve=>setImmediate(resolve));
   const prepared = JSON.parse(mod.namespace.pipeCacheContext(graph, String(closedSwitch.id)));
   assert.deepEqual(prepared.layout[0],{label:'updated_width',type:'INT',occurrence:0});
   assert.equal(closedSwitch.outputs[0].label,'ILLUSTRIOUS_PONY');
-  secondHost.inputs[0].link = secondHost.liveInputLinks.get(0);
-  delete secondHost.liveInputLinks;
+  secondHost.inputs[0].link = secondHostLink;
+  delete secondHost.getInputLink;
   delete secondHost.outputs[0].label;
   disconnect(newWidth,0,secondTo,1);
   connect(text,0,secondTo,1);
@@ -288,7 +297,7 @@ const flush = () => new Promise(resolve=>setImmediate(resolve));
   assert.equal(secondOutside.outputs.length,7);
   // Input forwarding across two nested boundaries keeps the host context.
   const outerIo = nextLink++;
-  outer.links.set(outerIo,{id:outerIo,origin_id:-10,origin_slot:0});
+  outer.links.set(outerIo,{id:outerIo,origin_id:-10,origin_slot:0,target_id:nestedHost.id,target_slot:0});
   nestedHost.inputs[0].link = outerIo;
   connect(secondTo,0,outerHost,0);
   await flush();

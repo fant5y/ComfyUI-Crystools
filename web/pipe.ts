@@ -11,6 +11,7 @@ interface Slot {
   name: string;
   label?: string;
   type: string | number;
+  link?: number | string | null;
   links?: (number | string)[] | null;
   color_on?: string;
   color_off?: string;
@@ -20,6 +21,8 @@ interface Link {
   id?: number | string;
   origin_id: number | string;
   origin_slot: number;
+  target_id?: number | string;
+  target_slot?: number;
   type?: string | number;
 }
 
@@ -50,6 +53,7 @@ interface PipeNode {
   pos?: [number, number];
   boundingRect?: ArrayLike<number>;
   getInputLink(index: number): Link | null;
+  isInputConnected?(index: number): boolean;
   isOutputConnected?(index: number): boolean;
   setOutputDataType?(index: number, type: Slot['type']): void;
   addInput(name: string, type: string): void;
@@ -283,6 +287,25 @@ const uniqueHost = (graph: PipeGraph): PipeNode | undefined => {
   return hosts.length === 1 ? hosts[0] : undefined;
 };
 
+const outerInputLink = (graph: PipeGraph, host: PipeNode, index: number): Link | undefined => {
+  const slot = host.inputs[index];
+  if (!slot || host.isInputConnected?.(index) === false) {
+    return undefined;
+  }
+  // SubgraphNode.getInputLink indexes inner outputs. Find the parent link by its target instead.
+  const matches = (link: Link | undefined): boolean => link?.target_id === host.id && link.target_slot === index;
+  const cached = slot.link === null || slot.link === undefined ? undefined : graph.links.get(slot.link);
+  if (matches(cached)) {
+    return cached;
+  }
+  for (const link of graph.links.values()) {
+    if (matches(link)) {
+      return link;
+    }
+  }
+  return undefined;
+};
+
 // eslint-disable-next-line complexity
 const resolveSource = (
   graph: PipeGraph, link: Link | null | undefined, context: InstanceContext,
@@ -301,7 +324,8 @@ const resolveSource = (
       return undefined;
     }
     return resolveSource(
-      host.graph, host.getInputLink(link.origin_slot), context, visited, new Set(inputPath).add(boundary),
+      host.graph, outerInputLink(host.graph, host, link.origin_slot), context, visited,
+      new Set(inputPath).add(boundary),
       inactive || host.mode === 2 || host.mode === 4,
     );
   }

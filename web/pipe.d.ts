@@ -2,6 +2,7 @@ interface Slot {
     name: string;
     label?: string;
     type: string | number;
+    link?: number | string | null;
     links?: (number | string)[] | null;
     color_on?: string;
     color_off?: string;
@@ -10,6 +11,8 @@ interface Link {
     id?: number | string;
     origin_id: number | string;
     origin_slot: number;
+    target_id?: number | string;
+    target_slot?: number;
     type?: string | number;
 }
 interface PipeGraph {
@@ -49,6 +52,7 @@ interface PipeNode {
     pos?: [number, number];
     boundingRect?: ArrayLike<number>;
     getInputLink(index: number): Link | null;
+    isInputConnected?(index: number): boolean;
     isOutputConnected?(index: number): boolean;
     setOutputDataType?(index: number, type: Slot['type']): void;
     addInput(name: string, type: string): void;

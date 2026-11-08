@@ -176,6 +176,23 @@ const uniqueHost = (graph) => {
     const hosts = graphsOf(graph).flatMap(owner => owner._nodes.filter(node => node.subgraph === graph));
     return hosts.length === 1 ? hosts[0] : undefined;
 };
+const outerInputLink = (graph, host, index) => {
+    const slot = host.inputs[index];
+    if (!slot || host.isInputConnected?.(index) === false) {
+        return undefined;
+    }
+    const matches = (link) => link?.target_id === host.id && link.target_slot === index;
+    const cached = slot.link === null || slot.link === undefined ? undefined : graph.links.get(slot.link);
+    if (matches(cached)) {
+        return cached;
+    }
+    for (const link of graph.links.values()) {
+        if (matches(link)) {
+            return link;
+        }
+    }
+    return undefined;
+};
 const resolveSource = (graph, link, context, visited, inputPath = new Set(), inactive = false) => {
     if (!link) {
         return undefined;
@@ -189,7 +206,7 @@ const resolveSource = (graph, link, context, visited, inputPath = new Set(), ina
         if (!host?.graph) {
             return undefined;
         }
-        return resolveSource(host.graph, host.getInputLink(link.origin_slot), context, visited, new Set(inputPath).add(boundary), inactive || host.mode === 2 || host.mode === 4);
+        return resolveSource(host.graph, outerInputLink(host.graph, host, link.origin_slot), context, visited, new Set(inputPath).add(boundary), inactive || host.mode === 2 || host.mode === 4);
     }
     const node = graph.getNodeById(link.origin_id);
     if (!node || visited.has(contextKey(node, context))) {
