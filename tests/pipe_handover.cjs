@@ -546,6 +546,55 @@ const flush = () => new Promise(resolve=>setImmediate(resolve));
   await flush(); assert.equal(serialEnd.outputs[1].label,'MODEL');
   auditModel.outputs[0].label='Renamed model'; graph.events.dispatchEvent(new Event('configured')); await flush();
   assert.equal(serialEnd.outputs[1].label,'Renamed model'); assert.equal(auditBlank.inputs[1].label,'Renamed model');
+  // A downstream edit describes empty upstream slots through a closed subgraph.
+  const backGraph = {
+    _nodes:[], links:new Map(), rootGraph:graph, inputNode:{id:-10},
+    outputNode:{slots:[]}, getNodeById:graph.getNodeById, setDirtyCanvas(){},
+  };
+  graph.subgraphs.set('backwards',backGraph);
+  const upstream = new ToNode(), insideExtract = new FromNode(backGraph);
+  const downstream = new ToNode(), backHost = new Node('Subgraph');
+  backHost.subgraph = backGraph;
+  backHost.outputs[0].label = 'FLUX[klein] - 9B';
+  const backLink = nextLink++;
+  backGraph.links.set(backLink,{id:backLink,origin_id:-10,origin_slot:0,target_id:insideExtract.id,target_slot:0});
+  insideExtract.inputs[0].link = backLink;
+  backGraph.outputNode.slots = [{getLinks:()=>[{origin_id:insideExtract.id,origin_slot:0}]}];
+  const insideEditor = new ToNode(backGraph);
+  const insideClip = new Node('Clip', backGraph);
+  insideClip.outputs[0] = {name:'CLIP',type:'CLIP',links:[]};
+  const hintClip = new Node('Clip');
+  hintClip.outputs[0] = {name:'CLIP',type:'CLIP',links:[]};
+  upstream.outputs[0].label = 'Incoming Pipe';
+  connect(upstream,0,backHost,0);
+  connect(backHost,0,downstream,0);
+  connect(hintClip,0,downstream,3);
+  connect(insideExtract,0,insideEditor,0);
+  connect(insideClip,0,insideEditor,2);
+  await flush();
+  assert.equal(downstream.inputs[0].label,'FLUX[klein] - 9B');
+  assert.equal(insideExtract.inputs[0].label,'Incoming Pipe');
+  assert.equal(downstream.inputs[0].name,'CPipeAny');
+  assert.equal(insideExtract.outputs[3].label,'CLIP');
+  assert.equal(upstream.inputs[3].label,'CLIP');
+  assert.equal(upstream.inputs[3].type,'CLIP');
+  assert.equal(upstream.inputs[2].label,'CLIP');
+  assert.equal(insideExtract.outputs[2].type,'CLIP');
+  assert.equal(upstream.properties.crystools_pipe_layout[2],undefined);
+  assert.equal(downstream.properties.crystools_pipe_layout[2].label,'CLIP');
+  connect(auditModel,0,upstream,3);
+  await flush();
+  assert.equal(upstream.inputs[3].label,'Renamed model');
+  assert.equal(insideExtract.outputs[3].label,'Renamed model');
+  disconnect(auditModel,0,upstream,3);
+  disconnect(hintClip,0,downstream,3);
+  disconnect(insideClip,0,insideEditor,2);
+  disconnect(backHost,0,downstream,0);
+  await flush();
+  assert.equal(upstream.inputs[3].label,'any_3');
+  assert.equal(upstream.inputs[2].label,'any_2');
+  assert.equal(insideExtract.outputs[3].label,'any_3');
+  assert.equal(downstream.inputs[0].label,'CPipeAny');
   let chain=auditTemplate;
   for(let i=0;i<40;i++) { const next=new ToNode(); connect(chain,0,next,0); chain=next; }
   const longEnd=new FromNode(); connect(chain,0,longEnd,0);

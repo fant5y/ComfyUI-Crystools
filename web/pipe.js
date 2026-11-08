@@ -9,6 +9,7 @@ const isPipe = (node) => node.type === PIPE_TO || node.type === PIPE_FROM;
 const isSwitch = (node) => node.type === SWITCH_ANY_AUTO || node.type === SWITCH_ANY_IF_EMPTY;
 const pendingGraphs = new WeakSet();
 let templateLayouts = new WeakMap();
+let backwardLayouts = new WeakMap();
 let collectingTemplates = false;
 let activeContext = new Map();
 const displayContext = (graph) => {
@@ -140,6 +141,13 @@ const refreshGroupLabel = (node) => {
     node.properties['crystools_group_label'] = label;
     return true;
 };
+const upstreamPipeLabel = (node, context, visited) => {
+    if (!node.graph || visited.has(contextKey(node, context))) {
+        return undefined;
+    }
+    const parent = resolveSource(node.graph, node.getInputLink(0), context, new Set(visited).add(contextKey(node, context)));
+    return parent ? describeOutput(parent)?.label : undefined;
+};
 const pipeOutputLabel = (node, slot, context, visited) => {
     const group = groupLabel(node);
     const manual = node.properties?.['crystools_manual_pipe_label'];
@@ -148,19 +156,20 @@ const pipeOutputLabel = (node, slot, context, visited) => {
     if (group || typeof own === 'string' && own !== slot.name && own !== inherited) {
         return group || own;
     }
-    if (!node.graph || visited.has(contextKey(node, context))) {
-        return slot.name;
-    }
-    const parent = resolveSource(node.graph, node.getInputLink(0), context, new Set(visited).add(contextKey(node, context)));
-    return parent ? describeOutput(parent)?.label || slot.name : slot.name;
+    return upstreamPipeLabel(node, context, visited) || slot.name;
 };
 const refreshPipeLabel = (node) => {
     refreshGroupLabel(node);
+    const context = displayContext(node.graph);
+    const input = node.inputs[0];
+    if (input) {
+        input.label = upstreamPipeLabel(node, context, new Set()) || input.name;
+    }
     const output = node.outputs[0];
     if (!output) {
         return;
     }
-    const label = pipeOutputLabel(node, output, displayContext(node.graph), new Set());
+    const label = pipeOutputLabel(node, output, context, new Set());
     if (!groupLabel(node) && (!output.label || output.label === output.name ||
         output.label === node.properties?.['crystools_inherited_pipe_label'])) {
         node.properties || (node.properties = {});
@@ -467,6 +476,12 @@ const refreshNode = (node) => {
     if (input) {
         saveLayout(node, values);
     }
+    const hints = backwardLayouts.get(node)?.get(contextKey(node, displayContext(node.graph)));
+    hints?.forEach((field, index) => {
+        if (field && !values[index]) {
+            values[index] = field;
+        }
+    });
     const slots = input ? node.inputs : node.outputs;
     const connectedCount = connectedRange(node, input);
     const count = Math.min(CAPACITY, Math.max(6, values.length + (input ? 1 : 0), connectedCount + (input ? 1 : 0)));
@@ -534,8 +549,47 @@ const templateTargets = (source, depth = 0) => {
     return [...(node.type === PIPE_TO ? [{ source, depth }] : []),
         ...(parent ? templateTargets(parent, depth) : [])];
 };
-const collectTemplates = (root) => {
+const recordBackwardHints = (source, fields) => {
+    const { node, context } = source;
+    let instances = backwardLayouts.get(node);
+    if (!instances) {
+        instances = new Map();
+        backwardLayouts.set(node, instances);
+    }
+    const key = contextKey(node, context);
+    const layout = instances.get(key) || [];
+    for (const { index, field } of fields) {
+        const existing = layout[index];
+        if (existing === undefined) {
+            layout[index] = field;
+        }
+        else if (existing && identity(existing) !== identity(field)) {
+            layout[index] = null;
+        }
+    }
+    instances.set(key, layout);
+};
+const collectBackwardHints = (editor, graph, context) => {
+    const visited = new Set([contextKey(editor, context)]);
+    const fields = editor.inputs.slice(1).flatMap((_slot, index) => {
+        const source = resolveSource(graph, editor.getInputLink(index + 1), context, visited);
+        const field = source && describeOutput(source);
+        return field ? [{ index, field }] : [];
+    });
+    if (!fields.length) {
+        return;
+    }
+    let parent = resolveSource(graph, editor.getInputLink(0), context, visited);
+    while (parent && isPipe(parent.node) && parent.index === 0 && parent.node.graph) {
+        recordBackwardHints(parent, fields);
+        parent = resolveSource(parent.node.graph, parent.node.getInputLink(0), parent.context, new Set(parent.visited).add(contextKey(parent.node, parent.context)));
+    }
+};
+const collectTemplates = (root, includeBackwardHints = false) => {
     templateLayouts = new WeakMap();
+    if (includeBackwardHints) {
+        backwardLayouts = new WeakMap();
+    }
     const proposals = [];
     const visit = (graph, context) => {
         for (const node of graph._nodes.filter(candidate => candidate.type === SWITCH_ANY_AUTO)) {
@@ -550,6 +604,8 @@ const collectTemplates = (root) => {
                 }
             }
         }
+        graph._nodes.filter(node => includeBackwardHints && node.type === PIPE_TO)
+            .forEach(node => collectBackwardHints(node, graph, context));
         for (const host of graph._nodes.filter(candidate => candidate.subgraph)) {
             if (!context.has(host.subgraph)) {
                 visit(host.subgraph, new Map(context).set(host.subgraph, host));
@@ -618,7 +674,7 @@ const scheduleRefresh = (graph) => {
     pendingGraphs.add(root);
     queueMicrotask(() => {
         try {
-            collectTemplates(root);
+            collectTemplates(root, true);
             for (const owner of graphsOf(root)) {
                 observeGraph(owner);
                 owner._nodes.filter(node => isPipe(node) || isSwitch(node) || node.type === PASS_ANY).forEach(refresh);
