@@ -391,8 +391,9 @@ The pipe output takes its name from the smallest enclosing canvas group, an
 explicit local output label outside a group, or the incoming pipe, in that
 order. An explicitly named subgraph output supplies the name to nodes outside
 the subgraph. A default output dot shows the name of the pipe connected directly
-to it. The corresponding socket on the outside also shows the pipe name. A custom
-export name takes precedence. With no name to inherit, the socket shows CPipeAny.
+to it. The corresponding socket on the outside also shows the pipe name. A default
+input socket and its inner dot show the name of the incoming pipe. Custom port
+names take precedence. With no name to inherit, the socket shows its default name.
 
 Pipe field labels and types update as you connect or disconnect wires, including
 through reroutes and across native subgraph inputs and outputs. A subgraph can

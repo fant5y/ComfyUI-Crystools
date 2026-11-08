@@ -15,8 +15,10 @@ interface Link {
     target_slot?: number;
     type?: string | number;
 }
-interface SubgraphOutputSlot extends Slot {
+interface BoundarySlot extends Slot {
     localized_name?: string;
+}
+interface SubgraphOutputSlot extends BoundarySlot {
     getLinks(): Link[];
 }
 interface PipeGraph {
@@ -28,6 +30,7 @@ interface PipeGraph {
     subgraphs?: Map<string, PipeGraph>;
     inputNode?: {
         id: number | string;
+        slots?: BoundarySlot[];
     };
     outputNode?: {
         slots: SubgraphOutputSlot[];

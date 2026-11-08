@@ -6,6 +6,7 @@ const SWITCH_ANY_AUTO = 'CSWITCH_ANY_AUTO';
 const SWITCH_ANY_IF_EMPTY = 'CSWITCH_ANY_IF_EMPTY';
 const PASS_ANY = 'Pass any [Crystools]';
 const EXPORTED_PIPE_LABELS = 'crystools_exported_pipe_labels';
+const IMPORTED_PIPE_LABELS = 'crystools_imported_pipe_labels';
 const isPipe = (node) => node.type === PIPE_TO || node.type === PIPE_FROM;
 const isDefaultPipeName = (name) => /^CPipeAny(?:_\d+)?$/.test(name);
 const isDefaultPipeSlot = (slot) => slot.type === 'CPipeAny' && isDefaultPipeName(slot.name);
@@ -205,15 +206,12 @@ const outerInputLink = (graph, host, index) => {
     }
     return undefined;
 };
-const inheritedExportLabels = (host) => host.properties?.[EXPORTED_PIPE_LABELS];
-const explicitExportLabel = (host, index) => {
-    const output = host.outputs[index];
-    if (!output) {
+const inheritedBoundaryLabels = (host, key) => host.properties?.[key];
+const explicitBoundaryLabel = (slot, boundary, inherited) => {
+    if (!slot) {
         return undefined;
     }
-    const boundary = host.subgraph?.outputNode?.slots[index];
-    const inherited = inheritedExportLabels(host)?.[output.name];
-    const label = output.label === inherited ? boundary?.label || output.name : output.label || output.name;
+    const label = slot.label === inherited?.[slot.name] ? boundary?.label || slot.name : slot.label || slot.name;
     return isDefaultPipeName(label) || label === 'any' || label === '*' ? undefined : label;
 };
 const resolveSource = (graph, link, context, visited, inputPath = new Set(), inactive = false) => {
@@ -239,7 +237,7 @@ const resolveSource = (graph, link, context, visited, inputPath = new Set(), ina
     if (node.subgraph) {
         const innerLink = node.subgraph.outputNode?.slots[link.origin_slot]?.getLinks()[0];
         const source = resolveSource(node.subgraph, innerLink, new Map(context).set(node.subgraph, node), new Set(visited).add(contextKey(node, context)), inputPath, unavailable);
-        const label = explicitExportLabel(node, link.origin_slot);
+        const label = explicitBoundaryLabel(node.outputs[link.origin_slot], node.subgraph.outputNode?.slots[link.origin_slot], inheritedBoundaryLabels(node, EXPORTED_PIPE_LABELS));
         if (source && label) {
             source.exportedLabel = label;
         }
@@ -701,15 +699,15 @@ const scheduleRefresh = (graph) => {
 };
 const observedGraphs = new WeakSet();
 const observedHosts = new WeakSet();
-const observePipeOutputLabels = (graph) => {
-    const slots = graph.outputNode?.slots.filter(isDefaultPipeSlot);
-    for (const slot of slots ?? []) {
-        if (Object.prototype.hasOwnProperty.call(slot, 'displayName') || !Object.isExtensible(slot)) {
-            continue;
+const observePipeBoundaryLabels = (slots, connectedLabel) => {
+    slots?.forEach(slot => {
+        if (!isDefaultPipeSlot(slot) || Object.prototype.hasOwnProperty.call(slot, 'displayName') ||
+            !Object.isExtensible(slot)) {
+            return;
         }
         const prototype = Object.getPrototypeOf(slot);
         if (!prototype || !('displayName' in prototype)) {
-            continue;
+            return;
         }
         Object.defineProperty(slot, 'displayName', {
             configurable: true,
@@ -718,41 +716,54 @@ const observePipeOutputLabels = (graph) => {
                 if (typeof (slot.label ?? slot.localized_name) === 'string') {
                     return nativeName;
                 }
-                const link = slot.getLinks()[0];
-                const pipe = link?.origin_slot === 0 ? graph.getNodeById(link.origin_id) : null;
-                return pipe && isPipe(pipe) ? pipe.outputs[0]?.label || nativeName : nativeName;
+                return connectedLabel(slot) || nativeName;
             },
         });
-    }
+    });
 };
-const refreshHostPipeLabels = (host, graph) => {
-    const previous = inheritedExportLabels(host);
+const refreshHostPipeLabels = (host, graph, input) => {
+    const key = input ? IMPORTED_PIPE_LABELS : EXPORTED_PIPE_LABELS;
+    const previous = inheritedBoundaryLabels(host, key);
     const inherited = {};
     const context = displayContext(graph);
-    host.outputs.forEach((output, index) => {
-        if (!isDefaultPipeSlot(output) || explicitExportLabel(host, index)) {
+    const boundary = host.subgraph?.[input ? 'inputNode' : 'outputNode'];
+    const slots = input ? host.inputs : host.outputs;
+    const getLabel = (index) => {
+        const link = input ? outerInputLink(graph, host, index) : { origin_id: host.id, origin_slot: index };
+        const source = resolveSource(graph, link, context, new Set());
+        return source && (input || isPipe(source.node)) ? describeOutput(source)?.label : undefined;
+    };
+    slots.forEach((slot, index) => {
+        if (!isDefaultPipeSlot(slot) || explicitBoundaryLabel(slot, boundary?.slots?.[index], previous)) {
             return;
         }
-        const source = resolveSource(graph, { origin_id: host.id, origin_slot: index }, context, new Set());
-        const label = source && isPipe(source.node) ? describeOutput(source)?.label : undefined;
+        const label = getLabel(index);
         if (label && !isDefaultPipeName(label)) {
-            output.label = label;
-            inherited[output.name] = label;
+            slot.label = label;
+            inherited[slot.name] = label;
         }
-        else if (output.label === previous?.[output.name]) {
-            output.label = undefined;
+        else if (slot.label === previous?.[slot.name]) {
+            slot.label = undefined;
         }
     });
     if (Object.keys(inherited).length) {
         host.properties || (host.properties = {});
-        host.properties[EXPORTED_PIPE_LABELS] = inherited;
+        host.properties[key] = inherited;
     }
     else if (previous && host.properties) {
-        delete host.properties[EXPORTED_PIPE_LABELS];
+        delete host.properties[key];
     }
 };
 const observeGraph = (graph) => {
-    observePipeOutputLabels(graph);
+    observePipeBoundaryLabels(graph.inputNode?.slots, slot => {
+        const index = graph.inputNode?.slots?.indexOf(slot) ?? -1;
+        return displayContext(graph).get(graph)?.inputs[index]?.label;
+    });
+    observePipeBoundaryLabels(graph.outputNode?.slots, slot => {
+        const link = slot.getLinks()[0];
+        const pipe = link?.origin_slot === 0 ? graph.getNodeById(link.origin_id) : null;
+        return pipe && isPipe(pipe) ? pipe.outputs[0]?.label : undefined;
+    });
     if (!observedGraphs.has(graph)) {
         observedGraphs.add(graph);
         const changed = graph.onAfterChange;
@@ -769,7 +780,8 @@ const observeGraph = (graph) => {
         }
     }
     for (const host of graph._nodes.filter(node => node.subgraph)) {
-        refreshHostPipeLabels(host, graph);
+        refreshHostPipeLabels(host, graph, true);
+        refreshHostPipeLabels(host, graph, false);
         if (observedHosts.has(host)) {
             continue;
         }

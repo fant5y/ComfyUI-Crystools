@@ -651,6 +651,35 @@ const flush = () => new Promise(resolve=>setImmediate(resolve));
   delete dot.label;
   assert.equal(dot.displayName,'CPipeAny');
 
+  const inputDot = Object.assign(Object.create(Object.getPrototypeOf(dot)), {
+    name:'CPipeAny_1', type:'CPipeAny',
+  });
+  backGraph.inputNode.slots = [inputDot];
+  backHost.inputs[0] = {...backHost.inputs[0], name:'CPipeAny_1', label:undefined};
+  graph.onAfterChange();
+  await flush();
+  assert.equal(backHost.inputs[0].label,'Incoming Pipe');
+  assert.equal(inputDot.displayName,'Incoming Pipe');
+  assert.equal(insideExtract.inputs[0].label,'Incoming Pipe');
+  assert.equal(backHost.inputs[0].name,'CPipeAny_1');
+  assert.equal(inputDot.label,undefined);
+  upstream.outputs[0].label = 'New incoming name';
+  graph.onAfterChange();
+  await flush();
+  assert.equal(backHost.inputs[0].label,'New incoming name');
+  assert.equal(inputDot.displayName,'New incoming name');
+  disconnect(upstream,0,backHost,0);
+  await flush();
+  assert.equal(backHost.inputs[0].label,undefined);
+  assert.equal(inputDot.displayName,'CPipeAny_1');
+  inputDot.label = 'Custom input';
+  backHost.inputs[0].label = 'Custom input';
+  connect(upstream,0,backHost,0);
+  await flush();
+  assert.equal(backHost.inputs[0].label,'Custom input');
+  assert.equal(inputDot.displayName,'Custom input');
+  assert.equal(insideExtract.inputs[0].label,'New incoming name');
+
   let chain=auditTemplate;
   for(let i=0;i<40;i++) { const next=new ToNode(); connect(chain,0,next,0); chain=next; }
   const longEnd=new FromNode(); connect(chain,0,longEnd,0);
