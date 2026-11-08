@@ -45,7 +45,7 @@ class Node {
   }
   getInputLink(slot) {
     if (!this.graph) throw Error('NullGraphError');
-    return this.graph.links.get(this.inputs[slot]?.link) || null;
+    return this.graph.links.get(this.liveInputLinks?.get(slot) ?? this.inputs[slot]?.link) || null;
   }
   addInput(name,type) { this.inputs.push({name,type,link:null}); }
   addOutput(name,type) { this.outputs.push({name,type,links:[]}); }
@@ -61,7 +61,7 @@ class FromNode extends Node { constructor(owner){super(FROM,owner);} }
 let nextLink = 1;
 function connect(source,sourceSlot,target,targetSlot) {
   const id = nextLink++;
-  target.graph.links.set(id,{origin_id:source.id,origin_slot:sourceSlot,type:source.outputs[sourceSlot].type});
+  target.graph.links.set(id,{id,origin_id:source.id,origin_slot:sourceSlot,type:source.outputs[sourceSlot].type});
   target.inputs[targetSlot].link = id;
   source.outputs[sourceSlot].links.push(id);
   target.onConnectionsChange?.(1,targetSlot,true);
@@ -98,7 +98,7 @@ const flush = () => new Promise(resolve=>setImmediate(resolve));
   await flush();
   assert.equal(to.inputs[3].name,'any_3');
   assert.equal(to.inputs[3].label,'Photo');
-  assert.equal(to.inputs[3].type,'*');
+  assert.equal(to.inputs[3].type,'IMAGE');
   assert.equal(to.inputs[3].color_on,'#custom');
   assert.equal(from.outputs[3].label,'Photo');
   assert.equal(from.outputs[3].type,'IMAGE');
@@ -170,8 +170,8 @@ const flush = () => new Promise(resolve=>setImmediate(resolve));
   text.outputs[0] = {name:'prompt',type:'STRING',links:[]};
   connect(text,0,edit,3);
   await flush();
-  assert.equal(last.outputs[3].label,'prompt / Photo');
-  assert.equal(last.outputs[3].color_on,'#string');
+  assert.equal(last.outputs[3].label,'Photo');
+  assert.equal(last.outputs[3].color_on,'#custom');
   disconnect(text,0,edit,3);
   await flush();
   assert.equal(last.outputs[3].label,'Photo');
@@ -241,7 +241,7 @@ const flush = () => new Promise(resolve=>setImmediate(resolve));
   // Route an incoming pipe through a shared definition; resolve each instance separately.
   const insideFrom = new FromNode(child);
   const ioLink = nextLink++;
-  child.links.set(ioLink,{origin_id:-10,origin_slot:0});
+  child.links.set(ioLink,{id:ioLink,origin_id:-10,origin_slot:0});
   insideFrom.inputs[0].link = ioLink;
   child.outputNode.slots = [{getLinks:()=>[{origin_id:insideFrom.id,origin_slot:0}]}];
   connect(to,0,host,0);
@@ -255,11 +255,40 @@ const flush = () => new Promise(resolve=>setImmediate(resolve));
   await flush();
   assert.equal(outside.outputs[3].label,'Photo');
   assert.equal(secondOutside.outputs[1].label,'prompt');
+  // A closed subgraph must use its live input link and its exported bundle label.
+  secondHost.liveInputLinks = new Map([[0, secondHost.inputs[0].link]]);
+  secondHost.inputs[0].link = null;
+  secondHost.outputs[0].label = 'ILLUSTRIOUS_PONY';
+  const closedSwitch = new FirstNode();
+  connect(secondHost,0,closedSwitch,0);
+  await flush();
+  assert.equal(closedSwitch.inputs[0].label,'ILLUSTRIOUS_PONY');
+  assert.equal(secondOutside.outputs[1].label,'prompt');
+  assert.equal(closedSwitch.properties.crystools_pipe_layout[0]?.label,'prompt');
+  const newWidth = new Node('Width');
+  newWidth.outputs[0] = {name:'width',type:'INT',links:[]};
+  disconnect(text,0,secondTo,1);
+  connect(newWidth,0,secondTo,1);
+  await flush();
+  assert.equal(secondOutside.outputs[1].label,'width');
+  assert.equal(closedSwitch.properties.crystools_pipe_layout[0]?.label,'width');
+  // Preparing a prompt updates runtime metadata even without a canvas event.
+  newWidth.outputs[0].name = 'updated_width';
+  mod.namespace.preparePipeLayouts(graph);
+  const prepared = JSON.parse(mod.namespace.pipeCacheContext(graph, String(closedSwitch.id)));
+  assert.deepEqual(prepared.layout[0],{label:'updated_width',type:'INT',occurrence:0});
+  assert.equal(closedSwitch.outputs[0].label,'ILLUSTRIOUS_PONY');
+  secondHost.inputs[0].link = secondHost.liveInputLinks.get(0);
+  delete secondHost.liveInputLinks;
+  delete secondHost.outputs[0].label;
+  disconnect(newWidth,0,secondTo,1);
+  connect(text,0,secondTo,1);
+  await flush();
   assert.equal(outside.outputs.length,101);
   assert.equal(secondOutside.outputs.length,7);
   // Input forwarding across two nested boundaries keeps the host context.
   const outerIo = nextLink++;
-  outer.links.set(outerIo,{origin_id:-10,origin_slot:0});
+  outer.links.set(outerIo,{id:outerIo,origin_id:-10,origin_slot:0});
   nestedHost.inputs[0].link = outerIo;
   connect(secondTo,0,outerHost,0);
   await flush();
@@ -330,7 +359,7 @@ const flush = () => new Promise(resolve=>setImmediate(resolve));
     getNodeById:graph.getNodeById,setDirtyCanvas(){}};
   graph.subgraphs.set('routed',routed);
   const innerAuto = new FirstNode(routed);
-  const inputLink = nextLink++; routed.links.set(inputLink,{origin_id:-10,origin_slot:0});
+  const inputLink = nextLink++; routed.links.set(inputLink,{id:inputLink,origin_id:-10,origin_slot:0});
   innerAuto.inputs[0].link = inputLink;
   routed.outputNode.slots = [{getLinks:()=>[{origin_id:innerAuto.id,origin_slot:0}]}];
   const hostA = new Node('Subgraph'), hostB = new Node('Subgraph'); hostA.subgraph=routed; hostB.subgraph=routed;
@@ -445,7 +474,7 @@ const flush = () => new Promise(resolve=>setImmediate(resolve));
     getNodeById:graph.getNodeById, setDirtyCanvas(){}};
   graph.subgraphs.set('auditSerial',serial);
   const serialInside = new FromNode(serial);
-  const serialLink = nextLink++; serial.links.set(serialLink,{origin_id:-77,origin_slot:0});
+  const serialLink = nextLink++; serial.links.set(serialLink,{id:serialLink,origin_id:-77,origin_slot:0});
   serialInside.inputs[0].link = serialLink;
   serial.outputNode.slots=[{getLinks:()=>[{origin_id:serialInside.id,origin_slot:0}]}];
   const serialA = new Node('Subgraph'), serialB = new Node('Subgraph'); serialA.subgraph=serial; serialB.subgraph=serial;
@@ -483,8 +512,8 @@ const flush = () => new Promise(resolve=>setImmediate(resolve));
   await flush();
   const duplicateLayout=JSON.parse(JSON.stringify(duplicateEdit.properties.crystools_pipe_layout));
   const canonical=JSON.parse(JSON.stringify(duplicateSwitch.properties.crystools_pipe_layout));
-  assert.deepEqual(duplicateLayout.map(field=>field.occurrence),[2,0,1]);
-  assert.deepEqual(canonical.map(field=>[field.label,field.occurrence]),[['IMAGE',2],['IMAGE',0],['IMAGE',1],['OTHER',0]]);
+  assert.deepEqual(duplicateLayout.map(field=>field.occurrence),[0,0,1]);
+  assert.deepEqual(canonical.map(field=>[field.label,field.occurrence]),[['OTHER',0],['IMAGE',0],['IMAGE',1]]);
   const duplicateExtract=new FromNode(), repacked=new ToNode(), repackSwitch=new FirstNode();
   connect(duplicateEdit,0,duplicateExtract,0);
   connect(duplicateExtract,1,repacked,1); connect(duplicateExtract,2,repacked,2);
@@ -498,7 +527,7 @@ const flush = () => new Promise(resolve=>setImmediate(resolve));
   }));
   const typedEdit=new ToNode(), typedExtract=new FromNode();
   connect(auditTemplate,0,typedEdit,0); connect(text,0,typedEdit,1); connect(typedEdit,0,typedExtract,0);
-  await flush(); assert.equal(typedExtract.outputs[1].type,'*');
+  await flush(); assert.equal(typedExtract.outputs[1].type,'MODEL');
   const localTemplate=new ToNode(), localBlank=new ToNode(), localSwitch=new FirstNode(), outerSwitch=new FirstNode();
   connect(text,0,localTemplate,1); connect(localTemplate,0,localSwitch,0); connect(localBlank,0,localSwitch,1);
   connect(auditTemplate,0,outerSwitch,0); connect(localSwitch,0,outerSwitch,1); await flush();

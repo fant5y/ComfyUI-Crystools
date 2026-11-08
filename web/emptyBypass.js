@@ -1,6 +1,6 @@
 import { app } from '../../scripts/app.js';
 import { api } from '../../scripts/api.js';
-import { pipeCacheContext } from './pipe.js';
+import { pipeCacheContext, preparePipeLayouts } from './pipe.js';
 
 const SWITCH = 'CSWITCH_ANY_IF_EMPTY';
 const DECISION = 'CRYSTOOLS_EMPTY_BYPASS_DECISION';
@@ -263,6 +263,8 @@ app.registerExtension({
             capture = current;
             serializing++;
             try {
+                // Workflow metadata and the cache key must reflect the live Pipe wiring.
+                preparePipeLayouts(graph);
                 const data = await originalSerialize.call(this, graph, ...args);
                 for (const [id, entry] of Object.entries(data.output)) {
                     if (CACHE_CLASSES.has(entry.class_type)) {

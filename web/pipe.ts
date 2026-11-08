@@ -11,13 +11,13 @@ interface Slot {
   name: string;
   label?: string;
   type: string | number;
-  link?: number | string | null;
   links?: (number | string)[] | null;
   color_on?: string;
   color_off?: string;
 }
 
 interface Link {
+  id?: number | string;
   origin_id: number | string;
   origin_slot: number;
   type?: string | number;
@@ -50,6 +50,8 @@ interface PipeNode {
   pos?: [number, number];
   boundingRect?: ArrayLike<number>;
   getInputLink(index: number): Link | null;
+  isOutputConnected?(index: number): boolean;
+  setOutputDataType?(index: number, type: Slot['type']): void;
   addInput(name: string, type: string): void;
   addOutput(name: string, type: string): void;
   removeInput(index: number): void;
@@ -156,11 +158,15 @@ interface Source {
   context: InstanceContext;
   visited: Set<string>;
   inactive: boolean;
+  exportedLabel?: string;
 }
 
 const orderedInputs = (node: PipeNode): number[] => {
+  if (!node.graph) {
+    return [];
+  }
   node.properties ||= {};
-  const connected = node.inputs.map((slot, index) => ({id: slot.link, index}))
+  const connected = node.inputs.map((_slot, index) => ({id: node.getInputLink(index)?.id, index}))
     .filter(slot => slot.id !== undefined && slot.id !== null);
   const previous = node.properties['crystools_input_order'];
   const order: (number | string)[] = Array.isArray(previous) ?
@@ -176,7 +182,7 @@ const orderedInputs = (node: PipeNode): number[] => {
 
 const branchInputs = (node: PipeNode): number[] => node.type === SWITCH_ANY_IF_EMPTY ?
   node.inputs.flatMap((slot, index) =>
-    ['on_true', 'on_false'].includes(slot.name) && slot.link !== null && slot.link !== undefined ? [index] : []) :
+    ['on_true', 'on_false'].includes(slot.name) && node.getInputLink(index) ? [index] : []) :
   orderedInputs(node);
 
 const contextKey = (node: PipeNode, context: InstanceContext): string => {
@@ -291,12 +297,11 @@ const resolveSource = (
     if (!boundary || inputPath.has(boundary)) {
       return undefined;
     }
-    const externalLinkId = host?.inputs[link.origin_slot]?.link;
-    if (!host?.graph || (typeof externalLinkId !== 'number' && typeof externalLinkId !== 'string')) {
+    if (!host?.graph) {
       return undefined;
     }
     return resolveSource(
-      host.graph, host.graph.links.get(externalLinkId), context, visited, new Set(inputPath).add(boundary),
+      host.graph, host.getInputLink(link.origin_slot), context, visited, new Set(inputPath).add(boundary),
       inactive || host.mode === 2 || host.mode === 4,
     );
   }
@@ -307,11 +312,17 @@ const resolveSource = (
   const unavailable = inactive || node.mode === 2 || node.mode === 4;
   if (node.subgraph) {
     const innerLink = node.subgraph.outputNode?.slots[link.origin_slot]?.getLinks()[0];
-    return resolveSource(
+    const source = resolveSource(
       node.subgraph, innerLink, new Map(context).set(node.subgraph, node),
       new Set(visited).add(contextKey(node, context)),
       inputPath, unavailable,
     );
+    const output = node.outputs[link.origin_slot];
+    const label = output?.label || output?.name;
+    if (source && label && !['CPipeAny', 'any', '*'].includes(label)) {
+      source.exportedLabel = label;
+    }
+    return source;
   }
   if (node.type === 'Reroute') {
     return resolveSource(
@@ -367,7 +378,7 @@ const describeOutput = (source: Source): ValueDescription | undefined => {
   const canvas = app.canvas;
   const type = slot.type;
   return {
-    label: isPipe(node) && index === 0 ? pipeOutputLabel(node, slot, context, visited) :
+    label: isPipe(node) && index === 0 ? source.exportedLabel || pipeOutputLabel(node, slot, context, visited) :
       slot.label || slot.name || String(slot.type),
     type,
     color_on: slot.color_on || canvas.default_connection_color_byType[type],
@@ -398,12 +409,7 @@ const refreshSwitchOutput = (node: PipeNode): boolean => {
   }
   const previous = [output.label, output.type, output.color_on, output.color_off];
   decorateSlot(output, describeSwitch(node, new Set(), displayContext(node.graph)), true);
-  output.links?.forEach(id => {
-    const link = node.graph?.links.get(id);
-    if (link) {
-      link.type = output.type;
-    }
-  });
+  updateOutputLinkTypes(node, 0, output);
   return [output.label, output.type, output.color_on, output.color_off]
     .some((value, index) => value !== previous[index]);
 };
@@ -418,12 +424,7 @@ const refreshPass = (node: PipeNode): void => {
   const value = source ? describeOutput(source) : undefined;
   decorateSlot(input, value, false, true);
   decorateSlot(output, value, true);
-  output.links?.forEach(id => {
-    const link = node.graph?.links.get(id);
-    if (link) {
-      link.type = output.type;
-    }
-  });
+  updateOutputLinkTypes(node, 0, output);
   const size = node.computeSize();
   if (size[0] > node.size[0]) {
     node.setSize([size[0], node.size[1]]);
@@ -535,21 +536,21 @@ const describePipe = (
   const parent = resolveSource(node.graph, node.getInputLink(0), context, path);
   const values = parent && (isPipe(parent.node) || isSwitch(parent.node) && parent.index === 0) ?
     describePipe(parent.node, parent.visited, parent.context) : [];
-  if (!collectingTemplates && node.type === PIPE_TO) {
-    const template = templateLayouts.get(node)?.get(contextKey(node, context)) || [];
-    const declared = new Set(fieldKeys(identifyLayout(values)));
-    template.forEach((value, index) => {
-      if (!values[index] && value && !declared.has(fieldKeys([value])[0])) {
-        values[index] = value;
-      }
-    });
-  }
   if (node.type === PIPE_TO) {
     node.inputs.slice(1).forEach((_slot, index) => {
       const source = resolveSource(node.graph!, node.getInputLink(index + 1), context, path);
       if (source) {
         // An override replaces the value, not the inherited destination field.
         values[index] ||= describeOutput(source);
+      }
+    });
+  }
+  if (!collectingTemplates && node.type === PIPE_TO) {
+    const template = templateLayouts.get(node)?.get(contextKey(node, context)) || [];
+    const declared = new Set(fieldKeys(identifyLayout(values)));
+    template.forEach((value, index) => {
+      if (!values[index] && value && !declared.has(fieldKeys([value])[0])) {
+        values[index] = value;
       }
     });
   }
@@ -568,14 +569,31 @@ const decorateSlot = (
   slot.color_off = value?.color_off;
 };
 
-const connectedRange = (slots: Slot[], input: boolean): number => {
-  let count = 0;
-  slots.slice(1).forEach((slot, index) => {
-    if (input ? slot.link !== null && slot.link !== undefined : slot.links?.length) {
-      count = index + 1;
+const updateOutputLinkTypes = (node: PipeNode, index: number, slot: Slot): void => {
+  if (!node.graph) {
+    return;
+  }
+  if (node.setOutputDataType) {
+    node.setOutputDataType(index, slot.type);
+    return;
+  }
+  for (const id of slot.links || []) {
+    const link = node.graph.links.get(id);
+    if (link) {
+      link.type = slot.type;
     }
-  });
-  return count;
+  }
+};
+
+const connectedRange = (node: PipeNode, input: boolean, first = 1): number => {
+  const slots = input ? node.inputs : node.outputs;
+  for (let index = slots.length - 1; index >= first; index--) {
+    if (input ? node.graph && node.getInputLink(index) :
+      node.isOutputConnected?.(index) ?? slots[index]?.links?.length) {
+      return index;
+    }
+  }
+  return first - 1;
 };
 
 // eslint-disable-next-line complexity
@@ -587,7 +605,7 @@ const refreshNode = (node: PipeNode): void => {
     saveLayout(node, values);
   }
   const slots = input ? node.inputs : node.outputs;
-  const connectedCount = connectedRange(slots, input);
+  const connectedCount = connectedRange(node, input);
   const count = Math.min(CAPACITY, Math.max(6, values.length + (input ? 1 : 0), connectedCount + (input ? 1 : 0)));
   const oldLength = slots.length;
   while (slots.length > count + 1) {
@@ -607,12 +625,7 @@ const refreshNode = (node: PipeNode): void => {
   slots.slice(1).forEach((slot, index) => {
     decorateSlot(slot, values[index], !input, true);
     if (!input) {
-      slot.links?.forEach(id => {
-        const link = node.graph?.links.get(id);
-        if (link) {
-          link.type = slot.type;
-        }
-      });
+      updateOutputLinkTypes(node, index + 1, slot);
     }
   });
   const size = node.computeSize();
@@ -622,12 +635,7 @@ const refreshNode = (node: PipeNode): void => {
 };
 
 const refreshSwitch = (node: PipeNode): void => {
-  let lastConnected = -1;
-  node.inputs.forEach((slot, index) => {
-    if (slot.link !== null && slot.link !== undefined) {
-      lastConnected = index;
-    }
-  });
+  const lastConnected = connectedRange(node, true, 0);
   saveLayout(node, describePipe(node));
   refreshSwitchOutput(node);
   const count = Math.min(CAPACITY, Math.max(2, lastConnected + 2));
@@ -732,6 +740,18 @@ const refresh = (node: PipeNode): void => {
     });
   } else {
     refreshNode(node);
+  }
+};
+
+export const preparePipeLayouts = (graph: PipeGraph): void => {
+  const root = graph.rootGraph || graph;
+  collectTemplates(root);
+  for (const owner of graphsOf(root)) {
+    for (const node of owner._nodes) {
+      if (node.type === PIPE_TO || node.type === SWITCH_ANY_AUTO) {
+        saveLayout(node, describePipe(node));
+      }
+    }
   }
 };
 

@@ -2,12 +2,12 @@ interface Slot {
     name: string;
     label?: string;
     type: string | number;
-    link?: number | string | null;
     links?: (number | string)[] | null;
     color_on?: string;
     color_off?: string;
 }
 interface Link {
+    id?: number | string;
     origin_id: number | string;
     origin_slot: number;
     type?: string | number;
@@ -49,6 +49,8 @@ interface PipeNode {
     pos?: [number, number];
     boundingRect?: ArrayLike<number>;
     getInputLink(index: number): Link | null;
+    isOutputConnected?(index: number): boolean;
+    setOutputDataType?(index: number, type: Slot['type']): void;
     addInput(name: string, type: string): void;
     addOutput(name: string, type: string): void;
     removeInput(index: number): void;
@@ -63,4 +65,5 @@ interface PipeNode {
     onDrawForeground?: (...args: unknown[]) => unknown;
 }
 export declare const pipeCacheContext: (root: PipeGraph, executionId: string) => string;
+export declare const preparePipeLayouts: (graph: PipeGraph) => void;
 export {};
