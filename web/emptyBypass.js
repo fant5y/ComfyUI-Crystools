@@ -34,12 +34,42 @@ function restoreModes(graph) {
 function compileRoutes(data, dtos, graph) {
     const source = data.output;
     const controls = new Map();
+    const subgraphs = new Map();
+    const isBypassSwitch = id => source[id]?.class_type === SWITCH &&
+        source[id].inputs.empty_action === 'bypass';
+
+    // A subgraph box is virtual: only its contents appear in the execution prompt.
+    // Follow the canvas wire to recover the box as the direct receiver.
+    for (const [id, dto] of dtos ?? []) {
+        const node = dto.node;
+        if (!node?.subgraph || dto.mode === 2 || dto.mode === 4) continue;
+        const prefix = id.slice(0, id.lastIndexOf(':') + 1);
+        const switches = new Set();
+        for (const input of dto.inputs) {
+            const link = node.graph?.links.get(input.linkId);
+            if (link?.origin_slot !== 0) continue;
+            const switchId = `${prefix}${link.origin_id}`;
+            if (isBypassSwitch(switchId)) switches.add(switchId);
+        }
+        if (switches.size) {
+            subgraphs.set(id, dto);
+            controls.set(id, [...switches]);
+        }
+    }
+
+    const guards = new Map();
     for (const [id, entry] of Object.entries(source)) {
+        const inherited = new Set();
+        for (let end = id.indexOf(':'); end !== -1; end = id.indexOf(':', end + 1)) {
+            const hostId = id.slice(0, end);
+            if (subgraphs.has(hostId)) controls.get(hostId).forEach(switchId => inherited.add(switchId));
+        }
         const switches = Object.values(entry.inputs).filter(value =>
             Array.isArray(value) && value.length === 2 && value[1] === 0 &&
-            source[value[0]]?.class_type === SWITCH &&
-            source[value[0]].inputs.empty_action === 'bypass').map(value => value[0]);
+            isBypassSwitch(value[0]) && !inherited.has(value[0])).map(value => value[0]);
         if (switches.length) controls.set(id, [...new Set(switches)]);
+        switches.forEach(switchId => inherited.add(switchId));
+        if (inherited.size) guards.set(id, [...inherited]);
     }
     if (!controls.size) return data;
     if (!dtos || [...controls.keys()].some(id => !dtos.get(id)?.resolveInput)) {
@@ -67,11 +97,11 @@ function compileRoutes(data, dtos, graph) {
         receivers.set(id, { node, signature: slotSignature(node), mode: node.mode,
             decisions: switches.map(switchId => decisions.get(switchId)[0]) });
     }
-    function route(id, parts, normal, passthrough, block = false, guard = false) {
+    function route(switches, parts, normal, passthrough, block = false, guard = false) {
         const inputs = { block, guard, has_passthrough: passthrough !== undefined };
         if (normal !== undefined) inputs.normal = normal;
         if (passthrough !== undefined) inputs.passthrough = passthrough;
-        controls.get(id).forEach((switchId, index) => {
+        switches.forEach((switchId, index) => {
             inputs[`condition_${index}`] = decisions.get(switchId);
         });
         return addNode('route', parts, ROUTE, inputs);
@@ -82,13 +112,32 @@ function compileRoutes(data, dtos, graph) {
         const dto = dtos.get(id);
         return [dto, Object.getOwnPropertyDescriptor(dto, 'mode'), dto.mode];
     });
+    const outputMethods = [];
+    let followedHosts;
     try {
         for (const [dto, , mode] of modes) {
             Object.defineProperty(dto, 'mode', { value: mode, writable: true, configurable: true });
         }
-        function routedValue(value, resolve, parts, bypassed = []) {
-            if (bypassed.length) {
-                const resolved = resolve();
+        for (const [id, dto] of subgraphs) {
+            const resolveOutput = dto.resolveOutput;
+            outputMethods.push([dto, Object.getOwnPropertyDescriptor(dto, 'resolveOutput')]);
+            Object.defineProperty(dto, 'resolveOutput', { configurable: true, value(slot, ...args) {
+                // Preserve the box boundary until both native routes are captured.
+                if (followedHosts && !followedHosts.has(id) && this.mode !== 4) {
+                    return { node: this, origin_id: id, origin_slot: slot };
+                }
+                return resolveOutput.call(this, slot, ...args);
+            } });
+        }
+        function routedValue(value, resolve, parts, bypassed = [], hosts = new Set()) {
+            if (bypassed.length || (subgraphs.size && resolve)) {
+                let resolved;
+                try {
+                    followedHosts = hosts;
+                    resolved = resolve();
+                } finally {
+                    followedHosts = undefined;
+                }
                 value = resolved?.widgetInfo
                     ? (Array.isArray(resolved.widgetInfo.value)
                         ? { __value__: resolved.widgetInfo.value } : resolved.widgetInfo.value)
@@ -99,30 +148,37 @@ function compileRoutes(data, dtos, graph) {
             if (bypassed.includes(upstream)) throw new Error('Crystools bypass: circular connection');
             const dto = dtos.get(upstream);
             const previous = dto.mode;
+            let normal = value;
+            if (subgraphs.has(upstream)) {
+                hosts = new Set(hosts).add(upstream);
+                normal = routedValue(value, resolve, [...parts, 'normal', upstream], bypassed, hosts);
+            }
             let passthrough;
             try {
                 dto.mode = 4;
-                passthrough = routedValue(value, resolve, parts, [...bypassed, upstream]);
+                passthrough = routedValue(value, resolve, parts, [...bypassed, upstream], hosts);
             } finally {
                 dto.mode = previous;
             }
-            return route(upstream, ['output', ...parts, ...bypassed, upstream], value, passthrough);
+            return route(controls.get(upstream), ['output', ...parts, ...bypassed, upstream], normal, passthrough);
         }
         for (const [id, entry] of Object.entries(source)) {
+            const switches = guards.get(id);
             for (const [name, value] of Object.entries(entry.inputs)) {
                 if (!Array.isArray(value) || value.length !== 2 || !source[value[0]]) continue;
                 const dto = dtos.get(id);
                 const index = dto?.inputs.findIndex(input => input.name === name);
-                const normal = routedValue(value, () => dto.resolveInput(index), [id, name]);
+                const resolve = dto?.resolveInput && index >= 0 ? () => dto.resolveInput(index) : undefined;
+                const normal = routedValue(value, resolve, [id, name]);
                 // Guard all receiver dependencies, including output nodes that are execution roots.
-                prompt.output[id].inputs[name] = controls.has(id)
-                    ? route(id, ['input', id, name], normal, undefined, true) : normal;
+                prompt.output[id].inputs[name] = switches
+                    ? route(switches, ['input', id, name], normal, undefined, true) : normal;
             }
-            if (controls.has(id)) {
+            if (switches) {
                 if (Object.hasOwn(entry.inputs, GUARD)) {
                     throw new Error(`Crystools bypass: reserved input already exists on node ${id}`);
                 }
-                prompt.output[id].inputs[GUARD] = route(id, ['guard', id], undefined, undefined, false, true);
+                prompt.output[id].inputs[GUARD] = route(switches, ['guard', id], undefined, undefined, false, true);
             }
         }
         for (const [switchId, decision] of decisions) {
@@ -131,6 +187,10 @@ function compileRoutes(data, dtos, graph) {
                 () => dto.resolveOutput(0, '*', new Set()), ['decision', switchId]);
         }
     } finally {
+        for (const [dto, descriptor] of outputMethods) {
+            if (descriptor) Object.defineProperty(dto, 'resolveOutput', descriptor);
+            else delete dto.resolveOutput;
+        }
         for (const [dto, descriptor] of modes) {
             if (descriptor) Object.defineProperty(dto, 'mode', descriptor);
             else delete dto.mode;

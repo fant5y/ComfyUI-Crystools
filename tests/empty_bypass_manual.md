@@ -16,6 +16,9 @@ On the user's next normal run:
   subgraph. Verify all selected stream items continue to the downstream nodes.
 
 Runtime routing is per subgraph instance. A shared subgraph definition has only
-one canvas mode: purple is shown only when all recorded instances agree. This
-change retains the installed receiver-inside-subgraph behavior; it does not add
-whole-subgraph bypass when a switch is wired into a subgraph box.
+one canvas mode: purple is shown only when all recorded instances agree.
+
+- Wire an outside switch's `any` output directly into a subgraph box. When the
+  selected branch is empty, the box should turn purple, its contents should be
+  skipped, and downstream inputs should follow ComfyUI's native bypass route.
+  When the selected branch has a value, the box should run normally again.
