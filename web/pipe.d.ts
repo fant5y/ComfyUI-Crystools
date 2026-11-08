@@ -15,6 +15,10 @@ interface Link {
     target_slot?: number;
     type?: string | number;
 }
+interface SubgraphOutputSlot extends Slot {
+    localized_name?: string;
+    getLinks(): Link[];
+}
 interface PipeGraph {
     groups?: {
         title: string;
@@ -26,9 +30,7 @@ interface PipeGraph {
         id: number | string;
     };
     outputNode?: {
-        slots: {
-            getLinks(): Link[];
-        }[];
+        slots: SubgraphOutputSlot[];
     };
     events?: {
         addEventListener(type: string, callback: () => void): void;

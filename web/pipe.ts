@@ -1,4 +1,4 @@
-import { app } from './comfy/index.js';
+import { api, app } from './comfy/index.js';
 
 const PIPE_TO = 'Pipe to/edit any [Crystools]';
 const PIPE_FROM = 'Pipe from any [Crystools]';
@@ -26,12 +26,17 @@ interface Link {
   type?: string | number;
 }
 
+interface SubgraphOutputSlot extends Slot {
+  localized_name?: string;
+  getLinks(): Link[];
+}
+
 interface PipeGraph {
   groups?: {title: string; boundingRect: ArrayLike<number>}[];
   rootGraph?: PipeGraph;
   subgraphs?: Map<string, PipeGraph>;
   inputNode?: {id: number | string};
-  outputNode?: {slots: {getLinks(): Link[]}[]};
+  outputNode?: {slots: SubgraphOutputSlot[]};
   events?: {addEventListener(type: string, callback: () => void): void};
   onAfterChange?: (...args: unknown[]) => unknown;
   _nodes: PipeNode[];
@@ -864,7 +869,35 @@ const scheduleRefresh = (graph: PipeGraph | undefined): void => {
 const observedGraphs = new WeakSet<PipeGraph>();
 const observedHosts = new WeakSet<PipeNode>();
 
+const observePipeOutputLabels = (graph: PipeGraph): void => {
+  const slots = graph.outputNode?.slots.filter(slot =>
+    slot.type === 'CPipeAny' && /^CPipeAny(?:_\d+)?$/.test(slot.name));
+  for (const slot of slots ?? []) {
+    if (Object.prototype.hasOwnProperty.call(slot, 'displayName') || !Object.isExtensible(slot)) {
+      continue;
+    }
+    const prototype = Object.getPrototypeOf(slot) as object | null;
+    if (!prototype || !('displayName' in prototype)) {
+      continue;
+    }
+    // The boundary's display can follow the pipe without renaming the saved port.
+    Object.defineProperty(slot, 'displayName', {
+      configurable: true,
+      get(): string {
+        const nativeName = Reflect.get(prototype, 'displayName', slot) as string;
+        if (typeof (slot.label ?? slot.localized_name) === 'string') {
+          return nativeName;
+        }
+        const link = slot.getLinks()[0];
+        const pipe = link?.origin_slot === 0 ? graph.getNodeById(link.origin_id) : null;
+        return pipe && isPipe(pipe) ? pipe.outputs[0]?.label || nativeName : nativeName;
+      },
+    });
+  }
+};
+
 const observeGraph = (graph: PipeGraph): void => {
+  observePipeOutputLabels(graph);
   if (!observedGraphs.has(graph)) {
     observedGraphs.add(graph);
     const changed = graph.onAfterChange;
@@ -898,6 +931,7 @@ app.registerExtension({
   name: 'Crystools.Pipes',
   setup(): void {
     observeGraph(app.rootGraph);
+    api.addEventListener('graphChanged', () => scheduleRefresh(app.rootGraph));
     const canvas = app.canvas.canvas as EventTarget | undefined;
     canvas?.addEventListener('subgraph-opened', event => {
       const {subgraph, closingGraph, fromNode} = (event as CustomEvent<{

@@ -390,7 +390,9 @@ The whole-pipe input shows the connected pipe's name when one is available.
 The pipe output takes its name from the smallest enclosing canvas group, an
 explicit local output label outside a group, or the incoming pipe, in that
 order. An explicitly named subgraph output supplies the name to nodes outside
-the subgraph. With no name to inherit, the whole-pipe socket shows `CPipeAny`.
+the subgraph. Inside the subgraph, a default output dot shows the name of the
+pipe connected directly to it. A custom dot name takes precedence. With no name
+to inherit, the whole-pipe socket shows CPipeAny.
 
 Pipe field labels and types update as you connect or disconnect wires, including
 through reroutes and across native subgraph inputs and outputs. A subgraph can

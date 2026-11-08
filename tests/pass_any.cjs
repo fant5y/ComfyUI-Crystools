@@ -14,8 +14,9 @@ const app = {
   },
 };
 const context = vm.createContext({console, queueMicrotask, CustomEvent});
-const bridge = new vm.SyntheticModule(['app'], function() {
+const bridge = new vm.SyntheticModule(['app','api'], function() {
   this.setExport('app', app);
+  this.setExport('api', new EventTarget());
 }, {context});
 const graph = {
   events: new EventTarget(), subgraphs: new Map(), _nodes: [], links: new Map(),

@@ -16,7 +16,11 @@ const app = {
   },
 };
 const context = vm.createContext({console, queueMicrotask, CustomEvent});
-const bridge = new vm.SyntheticModule(['app'], function() { this.setExport('app',app); }, {context});
+const api = new EventTarget();
+const bridge = new vm.SyntheticModule(['app','api'], function() {
+  this.setExport('app',app);
+  this.setExport('api',api);
+}, {context});
 const graph = {events:new EventTarget(), subgraphs:new Map(), _nodes:[], links:new Map(), getNodeById(id) { return this._nodes.find(n=>n.id===id); }, setDirtyCanvas(){}};
 graph.rootGraph = graph;
 app.rootGraph = graph;
@@ -595,6 +599,44 @@ const flush = () => new Promise(resolve=>setImmediate(resolve));
   assert.equal(upstream.inputs[2].label,'any_2');
   assert.equal(insideExtract.outputs[3].label,'any_3');
   assert.equal(downstream.inputs[0].label,'CPipeAny');
+
+  const innerBypassSwitch = new FirstNode();
+  connect(backHost,0,innerBypassSwitch,0);
+  connect(upstream,0,innerBypassSwitch,1);
+  await flush();
+  assert.equal(innerBypassSwitch.outputs[0].label,'FLUX[klein] - 9B');
+  insideExtract.mode = 4;
+  api.dispatchEvent(new Event('graphChanged'));
+  await flush();
+  assert.equal(innerBypassSwitch.inputs[0].label,'FLUX[klein] - 9B');
+  assert.equal(innerBypassSwitch.outputs[0].label,'Incoming Pipe');
+  insideExtract.mode = 0;
+  api.dispatchEvent(new Event('graphChanged'));
+  await flush();
+  assert.equal(innerBypassSwitch.outputs[0].label,'FLUX[klein] - 9B');
+
+  const dot = Object.assign(Object.create({
+    get displayName() { return this.label ?? this.name; },
+  }), {
+    name:'CPipeAny', type:'CPipeAny',
+    getLinks:()=>[{origin_id:insideExtract.id,origin_slot:0}],
+  });
+  backGraph.outputNode.slots.push(dot);
+  insideExtract.outputs[0].label = 'Anima';
+  backGraph.onAfterChange();
+  await flush();
+  assert.equal(dot.displayName,'Anima');
+  assert.equal(dot.name,'CPipeAny');
+  assert.equal(dot.label,undefined);
+  insideExtract.outputs[0].label = 'Renamed Anima';
+  assert.equal(dot.displayName,'Renamed Anima');
+  dot.label = 'Custom export';
+  assert.equal(dot.displayName,'Custom export');
+  dot.getLinks = () => [];
+  assert.equal(dot.displayName,'Custom export');
+  delete dot.label;
+  assert.equal(dot.displayName,'CPipeAny');
+
   let chain=auditTemplate;
   for(let i=0;i<40;i++) { const next=new ToNode(); connect(chain,0,next,0); chain=next; }
   const longEnd=new FromNode(); connect(chain,0,longEnd,0);

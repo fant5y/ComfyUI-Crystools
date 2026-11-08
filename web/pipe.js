@@ -1,4 +1,4 @@
-import { app } from './comfy/index.js';
+import { api, app } from './comfy/index.js';
 const PIPE_TO = 'Pipe to/edit any [Crystools]';
 const PIPE_FROM = 'Pipe from any [Crystools]';
 const CAPACITY = 100;
@@ -688,7 +688,32 @@ const scheduleRefresh = (graph) => {
 };
 const observedGraphs = new WeakSet();
 const observedHosts = new WeakSet();
+const observePipeOutputLabels = (graph) => {
+    const slots = graph.outputNode?.slots.filter(slot => slot.type === 'CPipeAny' && /^CPipeAny(?:_\d+)?$/.test(slot.name));
+    for (const slot of slots ?? []) {
+        if (Object.prototype.hasOwnProperty.call(slot, 'displayName') || !Object.isExtensible(slot)) {
+            continue;
+        }
+        const prototype = Object.getPrototypeOf(slot);
+        if (!prototype || !('displayName' in prototype)) {
+            continue;
+        }
+        Object.defineProperty(slot, 'displayName', {
+            configurable: true,
+            get() {
+                const nativeName = Reflect.get(prototype, 'displayName', slot);
+                if (typeof (slot.label ?? slot.localized_name) === 'string') {
+                    return nativeName;
+                }
+                const link = slot.getLinks()[0];
+                const pipe = link?.origin_slot === 0 ? graph.getNodeById(link.origin_id) : null;
+                return pipe && isPipe(pipe) ? pipe.outputs[0]?.label || nativeName : nativeName;
+            },
+        });
+    }
+};
 const observeGraph = (graph) => {
+    observePipeOutputLabels(graph);
     if (!observedGraphs.has(graph)) {
         observedGraphs.add(graph);
         const changed = graph.onAfterChange;
@@ -721,6 +746,7 @@ app.registerExtension({
     name: 'Crystools.Pipes',
     setup() {
         observeGraph(app.rootGraph);
+        api.addEventListener('graphChanged', () => scheduleRefresh(app.rootGraph));
         const canvas = app.canvas.canvas;
         canvas?.addEventListener('subgraph-opened', event => {
             const { subgraph, closingGraph, fromNode } = event.detail;
