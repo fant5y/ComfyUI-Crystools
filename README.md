@@ -369,22 +369,49 @@ This node is used to show the resolution of an image.
 
 ### Nodes: Pipe to/edit any, Pipe from any
 
-This powerful set of nodes is used to better organize your pipes.  
+**Pipe to/edit any** bundles values into one `CPipeAny` connection. Connect an
+existing pipe to edit specific fields, or leave that input empty to start a new
+pipe. **Pipe from any** exposes the individual fields and forwards the whole
+pipe through its first output.
 
-The "Pipe to/edit any" node is used to encapsulate multiple links into a single one. It includes support for editing and easily adding the modified content back to the same pipe number.
-
-The "Pipe from any" node is used to extract the content of a pipe.  
-
-### Expanded pipes in this fork
+### Slots and overrides
 
 Pipes start with six value slots and add a spare input as needed, up to 100 values.
-Connected slots show the source output's label and color. Labels propagate across
-reroutes, chained pipes and native subgraph boundaries. An edit replaces its value
-at that position; disconnecting it restores the inherited value and label.
+Direct edits use slot position. Wiring a new field gives it the source's label
+and type. Wiring an override into an established field changes its value and
+keeps the destination label and type. For example, a compatible string output
+named `text` can replace the value in `negative_prompt` while the pipe still shows
+`negative_prompt`. Disconnecting the override restores the inherited value on
+the next run. Empty slots keep their positions.
 
-The pipe output uses the smallest enclosing canvas group's title. Outside groups,
-an explicit local label wins; otherwise intermediate pipes inherit the upstream
-bundle name. Shared subgraphs display names for the instance currently opened.
+### Pipe names and subgraphs
+
+The whole-pipe input shows the connected pipe's name when one is available.
+The pipe output takes its name from the smallest enclosing canvas group, an
+explicit local output label outside a group, or the incoming pipe, in that
+order. An explicitly named subgraph output supplies the name to nodes outside
+the subgraph. With no name to inherit, the whole-pipe socket shows `CPipeAny`.
+
+Pipe field labels and types update as you connect or disconnect wires, including
+through reroutes and across native subgraph inputs and outputs. A subgraph can
+stay closed while these updates propagate. Values follow the same wired
+connections when you queue the workflow. With a shared subgraph definition,
+the inner canvas shows the instance you opened.
+
+### Backwards population
+
+A wired field on a downstream **Pipe to/edit any** can label and type the empty
+slot at the same position upstream, including through **Pipe from any** and
+across a closed subgraph. For example, wiring `CLIP` into downstream slot 3 makes
+an empty upstream slot 3 show `CLIP`. The upstream slot stays empty until it
+receives its own value. Established fields take precedence, and disconnecting
+the downstream wire removes its hint. If downstream editors suggest different
+names or types for the same slot, that slot gets no backwards hint.
+
+Backwards population follows whole-pipe connections up to a switch. A switch
+can reorder fields, so **Switch Any (Auto)** uses its own template rules.
+
+### Automatic switch templates
 
 When several pipes feed **Switch Any (Auto)**, the first-connected pipe supplies
 the template, regardless of its muted/bypassed state. Empty input slots on sibling
@@ -401,6 +428,8 @@ extraction output. Repeated identical labels/types are matched in occurrence
 order, including empty occurrences. An empty middle IMAGE does not move the next
 IMAGE into its place. Give semantically different values distinct source output labels when
 both their label and type would otherwise be identical.
+
+### Empty fields
 
 An empty whole pipe can be skipped by the automatic switch. Extracting an absent
 or empty field into another **Pipe to/edit any** leaves that edit input unused:
