@@ -6,6 +6,7 @@ const CAPACITY = 100;
 const SWITCH_ANY_AUTO = 'CSWITCH_ANY_AUTO';
 const SWITCH_ANY_IF_EMPTY = 'CSWITCH_ANY_IF_EMPTY';
 const PASS_ANY = 'Pass any [Crystools]';
+const EXPORTED_PIPE_LABELS = 'crystools_exported_pipe_labels';
 
 interface Slot {
   name: string;
@@ -85,6 +86,8 @@ interface ValueDescription {
 }
 
 const isPipe = (node: PipeNode): boolean => node.type === PIPE_TO || node.type === PIPE_FROM;
+const isDefaultPipeName = (name: string): boolean => /^CPipeAny(?:_\d+)?$/.test(name);
+const isDefaultPipeSlot = (slot: Slot): boolean => slot.type === 'CPipeAny' && isDefaultPipeName(slot.name);
 const isSwitch = (node: PipeNode): boolean =>
   node.type === SWITCH_ANY_AUTO || node.type === SWITCH_ANY_IF_EMPTY;
 const pendingGraphs = new WeakSet<PipeGraph>();
@@ -321,6 +324,21 @@ const outerInputLink = (graph: PipeGraph, host: PipeNode, index: number): Link |
   return undefined;
 };
 
+// Remember generated labels so they keep following the source after a reload.
+const inheritedExportLabels = (host: PipeNode): Record<string, string> | undefined =>
+  host.properties?.[EXPORTED_PIPE_LABELS] as Record<string, string> | undefined;
+
+const explicitExportLabel = (host: PipeNode, index: number): string | undefined => {
+  const output = host.outputs[index];
+  if (!output) {
+    return undefined;
+  }
+  const boundary = host.subgraph?.outputNode?.slots[index];
+  const inherited = inheritedExportLabels(host)?.[output.name];
+  const label = output.label === inherited ? boundary?.label || output.name : output.label || output.name;
+  return isDefaultPipeName(label) || label === 'any' || label === '*' ? undefined : label;
+};
+
 // eslint-disable-next-line complexity
 const resolveSource = (
   graph: PipeGraph, link: Link | null | undefined, context: InstanceContext,
@@ -356,9 +374,8 @@ const resolveSource = (
       new Set(visited).add(contextKey(node, context)),
       inputPath, unavailable,
     );
-    const output = node.outputs[link.origin_slot];
-    const label = output?.label || output?.name;
-    if (source && label && !['CPipeAny', 'any', '*'].includes(label)) {
+    const label = explicitExportLabel(node, link.origin_slot);
+    if (source && label) {
       source.exportedLabel = label;
     }
     return source;
@@ -870,8 +887,7 @@ const observedGraphs = new WeakSet<PipeGraph>();
 const observedHosts = new WeakSet<PipeNode>();
 
 const observePipeOutputLabels = (graph: PipeGraph): void => {
-  const slots = graph.outputNode?.slots.filter(slot =>
-    slot.type === 'CPipeAny' && /^CPipeAny(?:_\d+)?$/.test(slot.name));
+  const slots = graph.outputNode?.slots.filter(isDefaultPipeSlot);
   for (const slot of slots ?? []) {
     if (Object.prototype.hasOwnProperty.call(slot, 'displayName') || !Object.isExtensible(slot)) {
       continue;
@@ -896,6 +912,31 @@ const observePipeOutputLabels = (graph: PipeGraph): void => {
   }
 };
 
+const refreshHostPipeLabels = (host: PipeNode, graph: PipeGraph): void => {
+  const previous = inheritedExportLabels(host);
+  const inherited: Record<string, string> = {};
+  const context = displayContext(graph);
+  host.outputs.forEach((output, index) => {
+    if (!isDefaultPipeSlot(output) || explicitExportLabel(host, index)) {
+      return;
+    }
+    const source = resolveSource(graph, {origin_id: host.id, origin_slot: index}, context, new Set());
+    const label = source && isPipe(source.node) ? describeOutput(source)?.label : undefined;
+    if (label && !isDefaultPipeName(label)) {
+      output.label = label;
+      inherited[output.name] = label;
+    } else if (output.label === previous?.[output.name]) {
+      output.label = undefined;
+    }
+  });
+  if (Object.keys(inherited).length) {
+    host.properties ||= {};
+    host.properties[EXPORTED_PIPE_LABELS] = inherited;
+  } else if (previous && host.properties) {
+    delete host.properties[EXPORTED_PIPE_LABELS];
+  }
+};
+
 const observeGraph = (graph: PipeGraph): void => {
   observePipeOutputLabels(graph);
   if (!observedGraphs.has(graph)) {
@@ -914,6 +955,7 @@ const observeGraph = (graph: PipeGraph): void => {
     }
   }
   for (const host of graph._nodes.filter(node => node.subgraph)) {
+    refreshHostPipeLabels(host, graph);
     if (observedHosts.has(host)) {
       continue;
     }
