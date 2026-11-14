@@ -21,8 +21,11 @@ function graphNodes(graph) {
 }
 
 function slotSignature(node) {
-    return JSON.stringify((node.inputs ?? []).map(input =>
-        [input.name, input.type, input.link ?? input.linkId]));
+    // Extensions can refresh socket types without changing the actual wiring.
+    return JSON.stringify((node.inputs ?? []).flatMap((input, index) => {
+        const link = input.link ?? input.linkId;
+        return link == null ? [] : [[index, input.name, link]];
+    }));
 }
 
 function restoreModes(graph) {
