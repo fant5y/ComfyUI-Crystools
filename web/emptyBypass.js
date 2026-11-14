@@ -58,6 +58,17 @@ function compileRoutes(data, dtos, graph) {
     const subgraphs = new Map();
     const isBypassSwitch = id => source[id]?.class_type === SWITCH &&
         source[id].inputs.empty_action === 'bypass';
+    function directlyConnectedSwitches(id, dto) {
+        const switches = new Set();
+        const prefix = id.slice(0, id.lastIndexOf(':') + 1);
+        for (const input of dto?.node?.inputs ?? []) {
+            const link = dto.node.graph?.links.get(input.link ?? input.linkId);
+            if (link?.origin_slot !== 0) continue;
+            const switchId = `${prefix}${link.origin_id}`;
+            if (isBypassSwitch(switchId)) switches.add(switchId);
+        }
+        return switches;
+    }
 
     // A subgraph box is virtual: only its contents appear in the execution prompt.
     // Follow the canvas wire to recover the box as the direct receiver.
@@ -85,10 +96,15 @@ function compileRoutes(data, dtos, graph) {
             const hostId = id.slice(0, end);
             if (subgraphs.has(hostId)) controls.get(hostId).forEach(switchId => inherited.add(switchId));
         }
-        const switches = Object.values(entry.inputs).filter(value =>
-            Array.isArray(value) && value.length === 2 && value[1] === 0 &&
-            isBypassSwitch(value[0]) && !inherited.has(value[0])).map(value => value[0]);
-        if (switches.length) controls.set(id, [...new Set(switches)]);
+        const switches = new Set([...directlyConnectedSwitches(id, dtos?.get(id))]
+            .filter(switchId => !inherited.has(switchId)));
+        for (const value of Object.values(entry.inputs)) {
+            if (
+                Array.isArray(value) && value.length === 2 && value[1] === 0 &&
+                isBypassSwitch(value[0]) && !inherited.has(value[0])
+            ) switches.add(value[0]);
+        }
+        if (switches.size) controls.set(id, [...switches]);
         switches.forEach(switchId => inherited.add(switchId));
         if (inherited.size) guards.set(id, [...inherited]);
     }
