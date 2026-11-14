@@ -24,7 +24,7 @@ function slotSignature(node) {
     // Extensions can refresh socket types without changing the actual wiring.
     return JSON.stringify((node.inputs ?? []).flatMap((input, index) => {
         const link = input.link ?? input.linkId;
-        return link == null ? [] : [[index, input.name, link]];
+        return link == null ? [] : [[index, link]];
     }));
 }
 
@@ -348,6 +348,30 @@ app.registerExtension({
             if (context) showDecision(context, detail);
             else for (const request of pending) {
                 if (request.decisionIds.has(detail.node)) request.early.push(detail);
+            }
+        });
+                // History is published after execution_success. Read it when ComfyUI
+        // announces the queue update, so the final indicator can recover a
+        // missed executed event without evaluating any nodes again.
+        api.addEventListener('status', () => {
+            for (const [promptId, context] of runs) {
+                if (context.states.size === context.decisionIds.size || context.readingHistory) continue;
+                if ((app.rootGraph ?? app.graph) !== context.graph) continue;
+                context.readingHistory = true;
+                void api.fetchApi(`/history/${encodeURIComponent(promptId)}`)
+                    .then(response => response.ok ? response.json() : {})
+                    .then(history => {
+                        const record = history[promptId];
+                        if (!record) return;
+                        for (const id of context.decisionIds) {
+                            if (!context.states.has(id)) {
+                                showDecision(context, { node: id, output: record.outputs?.[id] });
+                            }
+                        }
+                        runs.delete(promptId);
+                    })
+                    .catch(error => console.warn('Crystools could not read bypass results', error))
+                    .finally(() => { context.readingHistory = false; });
             }
         });
         const originalQueue = api.queuePrompt;
