@@ -90,6 +90,7 @@ class CEmptyBypassDecision(io.ComfyNode):
             node_id="CRYSTOOLS_EMPTY_BYPASS_DECISION",
             is_dev_only=True,
             is_input_list=True,
+            is_output_node=True,
             has_intermediate_output=True,
             inputs=[io.AnyType.Input("value", optional=True)],
             outputs=[io.Boolean.Output()],
