@@ -659,8 +659,10 @@ const refresh = (node) => {
                 return;
             }
             const source = node.graph && resolveSource(node.graph, node.getInputLink(index), displayContext(node.graph), new Set());
-            decorateSlot(slot, source ? describeOutput(source) : undefined, false);
-            slot.label = slot.name === 'on_true' ? 'If empty' : 'If not empty';
+            const value = source ? describeOutput(source) : undefined;
+            const condition = slot.name === 'on_true' ? 'If empty' : 'If not empty';
+            decorateSlot(slot, value, false);
+            slot.label = value?.label ? `${condition} · ${value.label}` : condition;
         });
     }
     else {
