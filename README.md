@@ -686,8 +686,11 @@ The decision uses the checked values. Always-rerun or non-deterministic upstream
 nodes can produce different values if they execute again in the main job.
 
 Empty checks include `None`, whitespace-only strings, empty containers/bytes,
-zero-element tensors and wholly empty Crystools pipes. `0` and `False` remain
-valid unless `zero_is_empty` is enabled. Other selected values pass through
+zero-element tensors and wholly empty Crystools pipes. A Boolean wired to
+`value` selects `on_true` for `False` and `on_false` for `True`. To bypass
+on `False`, leave `on_true` disconnected and wire the normal value to
+`on_false`. Numeric `0` remains valid unless `zero_is_empty` is enabled.
+Other selected values pass through
 unchanged. A missing `value` is treated as empty, including when chaining these
 nodes. Existing switches and ordinary `None` handling elsewhere are unchanged.
 

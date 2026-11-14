@@ -25,8 +25,7 @@ class CSwitchAnyIfEmpty(io.ComfyNode):
                 io.AnyType.Input(
                     "value",
                     optional=True,
-                    lazy=True,
-                    tooltip="Any `empty value` AND `False` will return empty.",
+                    tooltip="False and empty values select on_true. True selects on_false.",
                 ),
                 io.AnyType.Input("on_true", optional=True, lazy=True),
                 io.AnyType.Input("on_false", optional=True, lazy=True),
@@ -49,7 +48,7 @@ class CSwitchAnyIfEmpty(io.ComfyNode):
         return (
             value is EMPTY
             or empty_value(value)
-            or (isinstance(value, bool) and value is False)
+            or value is False
             or (zero_is_empty and isinstance(value, Number) and value == 0)
         )
 

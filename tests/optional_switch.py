@@ -198,7 +198,7 @@ class SwitchSelection(unittest.TestCase):
         decision = importlib.import_module(
             'crystools_test.nodes.switch_if_empty').CEmptyBypassDecision
         self.assertFalse(decision.define_schema().is_output_node)
-        for value, branch in ((None, 'on_true'), ('present', 'on_false')):
+        for value, branch in ((None, 'on_true'), (False, 'on_true'), (True, 'on_false')):
             with self.subTest(branch=branch):
                 selected = self.switch.execute(value=value, empty_action='bypass')
                 result = decision.execute(value=[selected[0]])
@@ -221,7 +221,7 @@ class SwitchSelection(unittest.TestCase):
         self.assertEqual(len(self.switch.RETURN_TYPES), 2)
         self.assertEqual(self.switch.RETURN_TYPES[0], '*')
         self.assertEqual(self.switch.RETURN_TYPES[1], 'BOOLEAN')
-        for value, expected in ((None, True), ('present', False), (0, False), (False, False)):
+        for value, expected in ((None, True), ('present', False), (0, False), (False, True), (True, False)):
             with self.subTest(value=value):
                 result = self.switch.execute(value=value, on_true='empty', on_false='valid')
                 self.assertIs(result[1], expected)
@@ -240,12 +240,12 @@ class SwitchSelection(unittest.TestCase):
                 other = 'on_false' if branch == 'on_true' else 'on_true'
                 self.assertEqual(self.switch.check_lazy_status(value=value, **{other: None}), [])
 
-    def test_empty_types_and_valid_false_values(self):
+    def test_empty_types_and_valid_values(self):
         import torch
-        for value in (None, '', '  ', [], {}, (), b'', torch.empty(0), self.module.EMPTY):
+        for value in (None, False, '', '  ', [], {}, (), b'', torch.empty(0), self.module.EMPTY):
             with self.subTest(value=value):
                 self.assertEqual(self.switch.execute(value=value, on_true='empty', on_false='valid')[0], 'empty')
-        for value in (0, False, torch.ones(2), {'value': None}, [None]):
+        for value in (0, True, torch.ones(2), {'value': None}, [None]):
             with self.subTest(value=value):
                 self.assertEqual(self.switch.execute(value=value, on_true='empty', on_false='valid')[0], 'valid')
         self.assertEqual(self.switch.execute(value=0, zero_is_empty=True, on_true='zero')[0], 'zero')
@@ -270,7 +270,7 @@ class WorkflowExecution(unittest.TestCase):
                 calls.append(kind)
                 if kind == 'unused':
                     raise AssertionError('Unselected branch executed')
-                return (None if kind == 'empty' else kind,)
+                return ({'empty': None, 'true': True, 'false': False}.get(kind, kind),)
 
         class Sink(Receiver):
             OUTPUT_NODE = True
@@ -293,14 +293,16 @@ class WorkflowExecution(unittest.TestCase):
             cases = [('empty', 'on_false', 'unused', 'default'),
                      ('present', 'on_true', 'unused', 'default'),
                      ('empty', 'on_true', 'empty', 'default'),
-                     ('present', 'on_false', 'chosen', 'chosen')]
+                     ('true', 'on_false', 'chosen', 'chosen'),
+                     ('false', 'on_false', 'unused', 'default')]
             for case_index, (check, connected, branch_value, expected) in enumerate(cases):
                 executor = execution.PromptExecutor(server, cache_args={'ram': 0, 'ram_inactive': 0})
                 prompt = {
                     'source': {'class_type': 'TestEmptySource', 'inputs': {'kind': check}},
                     'branch': {'class_type': 'TestEmptySource', 'inputs': {'kind': branch_value}},
                     'switch': {'class_type': 'TestEmptySwitch', 'inputs': {
-                        'value': ['source', 0], connected: ['branch', 0], 'zero_is_empty': False}},
+                        'value': ['source', 0], connected: ['branch', 0],
+                        'zero_is_empty': False, 'empty_action': 'omit'}},
                     'sink': {'class_type': 'TestEmptySink', 'inputs': {'value': ['switch', 0]}},
                 }
                 for run in range(2):
@@ -315,7 +317,7 @@ class WorkflowExecution(unittest.TestCase):
                     self.assertIs(cached.outputs[0][0], module.EMPTY)
                 else:
                     self.assertEqual(cached.outputs[0][0], expected)
-            self.assertEqual(calls.count(('sink', 'default')), 3)
+            self.assertEqual(calls.count(('sink', 'default')), 4)
             self.assertEqual(calls.count(('sink', 'chosen')), 1)
             self.assertNotIn('unused', calls)
         finally:
