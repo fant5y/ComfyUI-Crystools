@@ -851,6 +851,7 @@ const refresh = (node: PipeNode): void => {
         node.graph, node.getInputLink(index), displayContext(node.graph), new Set(),
       );
       decorateSlot(slot, source ? describeOutput(source) : undefined, false);
+      slot.label = slot.name === 'on_true' ? 'If empty' : 'If not empty';
     });
   } else {
     refreshNode(node);
