@@ -26,7 +26,7 @@ class CSwitchAnyIfEmpty(io.ComfyNode):
                     "value",
                     optional=True,
                     lazy=True,
-                    tooltip="Any `empty value` AND `False` will return is_empty.",
+                    tooltip="Any `empty value` AND `False` will return empty.",
                 ),
                 io.AnyType.Input("on_true", optional=True, lazy=True),
                 io.AnyType.Input("on_false", optional=True, lazy=True),
@@ -38,16 +38,6 @@ class CSwitchAnyIfEmpty(io.ComfyNode):
                     tooltip="omit: use the optional input default. bypass: set nodes connected to any to native purple bypass when the selected branch is empty.",
                 ),
             ],
-            outputs=[
-                io.AnyType.Output(display_name="any"),
-                io.Boolean.Output(display_name="is_empty"),
-            ],
-        )   ],
-            outputs=[
-                io.AnyType.Output(display_name="any"),
-                io.Boolean.Output(display_name="is_empty"),
-            ],
-        )   ],
             outputs=[
                 io.AnyType.Output(display_name="any"),
                 io.Boolean.Output(display_name="is_empty"),
