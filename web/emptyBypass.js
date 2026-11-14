@@ -10,6 +10,8 @@ const GUARD = '__crystools_empty_bypass_guard';
 const CACHE_CONTEXT = '_crystools_cache_context';
 const CACHE_CLASSES = new Set(['CSWITCH_ANY_AUTO', 'Pipe to/edit any [Crystools]']);
 const contexts = new WeakMap();
+const modeSnapshots = new WeakMap();
+const deferredDecisions = new Set();
 let capture;
 let serializing = 0;
 
@@ -24,11 +26,30 @@ function slotSignature(node) {
 }
 
 function restoreModes(graph) {
+    const snapshots = [];
     for (const node of graphNodes(graph)) {
-        if (node.properties?.[OWNED_MODE] === undefined) continue;
-        if (node.mode === 4) node.mode = node.properties[OWNED_MODE];
+        const mode = node.properties?.[OWNED_MODE];
+        if (mode === undefined) continue;
+        if (node.mode === 4) {
+            snapshots.push({ node, mode, graph: node.graph, signature: slotSignature(node) });
+            node.mode = mode;
+        }
         delete node.properties[OWNED_MODE];
     }
+    return snapshots;
+}
+
+function restoreCanvasBypass(snapshots) {
+    for (const { node, mode, graph, signature } of snapshots) {
+        if (node.graph !== graph || node.mode !== mode || slotSignature(node) !== signature) continue;
+        node.properties[OWNED_MODE] = mode;
+        node.mode = 4;
+    }
+}
+
+function redrawGraph(graph) {
+    graph.setDirtyCanvas?.(true, true);
+    if ((app.rootGraph ?? app.graph) === graph) app.canvas?.setDirty?.(true, true);
 }
 
 function compileRoutes(data, dtos, graph) {
@@ -205,7 +226,15 @@ function showDecision(context, detail) {
     const state = detail.output?.crystools_empty_branch?.[0];
     if (typeof state !== 'boolean' || !context.decisionIds.has(detail.node)) return;
     context.states.set(detail.node, state);
-    if (serializing || (app.rootGraph ?? app.graph) !== context.graph) return;
+    if (serializing) {
+        deferredDecisions.add(context);
+        return;
+    }
+    applyDecisions(context);
+}
+
+function applyDecisions(context) {
+    if ((app.rootGraph ?? app.graph) !== context.graph) return;
     const groups = new Map();
     for (const receiver of context.receivers.values()) {
         const group = groups.get(receiver.node) ?? [];
@@ -230,7 +259,7 @@ function showDecision(context, detail) {
             delete node.properties[OWNED_MODE];
         }
     }
-    context.graph.setDirtyCanvas?.(true, true);
+    redrawGraph(context.graph);
 }
 
 app.registerExtension({
@@ -257,7 +286,13 @@ app.registerExtension({
     setup() {
         const originalSerialize = app.graphToPrompt;
         app.graphToPrompt = async function (graph = app.rootGraph ?? app.graph, ...args) {
-            restoreModes(graph);
+            // Serialize normal modes without clearing the last result from the canvas.
+            let snapshot = modeSnapshots.get(graph);
+            if (!snapshot) {
+                snapshot = { depth: 0, modes: restoreModes(graph) };
+                modeSnapshots.set(graph, snapshot);
+            }
+            snapshot.depth++;
             const previous = capture;
             const current = {};
             capture = current;
@@ -275,6 +310,15 @@ app.registerExtension({
             } finally {
                 serializing--;
                 capture = previous;
+                if (--snapshot.depth === 0) {
+                    modeSnapshots.delete(graph);
+                    restoreCanvasBypass(snapshot.modes);
+                    if (snapshot.modes.length) redrawGraph(graph);
+                }
+                if (!serializing) {
+                    for (const context of deferredDecisions) applyDecisions(context);
+                    deferredDecisions.clear();
+                }
             }
         };
 
