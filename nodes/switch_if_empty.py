@@ -4,12 +4,14 @@ from comfy_api.latest import io
 from comfy_execution.graph_utils import ExecutionBlocker
 
 from ..core import CATEGORY
-from ..core.optional import BYPASS_ALLOWED, EMPTY
+from ..core.optional import BYPASS, BYPASS_ALLOWED, EMPTY
 from ..core.pipe import empty_value
 from ._names import CLASSES
 
 
 class CSwitchAnyIfEmpty(io.ComfyNode):
+    CRYSTOOLS_HANDLES_BYPASS = True
+
     @classmethod
     def define_schema(cls) -> io.Schema:
         return io.Schema(
@@ -47,6 +49,7 @@ class CSwitchAnyIfEmpty(io.ComfyNode):
     def _is_empty(cls, value: object, zero_is_empty: bool) -> bool:
         return (
             value is EMPTY
+            or value is BYPASS
             or empty_value(value)
             or value is False
             or (zero_is_empty and isinstance(value, Number) and value == 0)
@@ -76,8 +79,8 @@ class CSwitchAnyIfEmpty(io.ComfyNode):
     ) -> io.NodeOutput:
         is_empty = bool(cls._is_empty(value, zero_is_empty))
         selected = on_true if is_empty else on_false
-        if selected is None or selected is EMPTY:
-            selected = EMPTY
+        if selected is None or selected is EMPTY or selected is BYPASS:
+            selected = BYPASS if empty_action == 'bypass' else EMPTY
         return io.NodeOutput(selected, is_empty)
 
 
@@ -98,7 +101,7 @@ class CEmptyBypassDecision(io.ComfyNode):
 
     @classmethod
     def execute(cls, value: list[object] | None = None) -> io.NodeOutput:
-        bypass = value is None or not value or all(item is EMPTY for item in value)
+        bypass = value is None or not value or all(item is EMPTY or item is BYPASS for item in value)
         return io.NodeOutput(bypass, ui={"crystools_empty_branch": [bypass]})
 
 
