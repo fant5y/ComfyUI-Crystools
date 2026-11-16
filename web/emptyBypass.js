@@ -3,7 +3,6 @@ import { api } from '../../scripts/api.js';
 import { pipeCacheContext, preparePipeLayouts } from './pipe.js';
 
 const SWITCH = 'CSWITCH_ANY_IF_EMPTY';
-const DECISION = 'CRYSTOOLS_EMPTY_BYPASS_DECISION';
 const OWNED_MODE = 'crystools_empty_bypass_original_mode';
 const CACHE_CONTEXT = '_crystools_cache_context';
 const CACHE_CLASSES = new Set(['CSWITCH_ANY_AUTO', 'Pipe to/edit any [Crystools]']);
@@ -50,28 +49,29 @@ function redrawGraph(graph) {
     if ((app.rootGraph ?? app.graph) === graph) app.canvas?.setDirty?.(true, true);
 }
 
-async function completedProbe(promptId) {
-    if (!promptId) throw new Error('Crystools bypass: preflight was not accepted');
-    let absentCount = 0;
-    for (;;) {
-        const response = await api.fetchApi(`/history/${encodeURIComponent(promptId)}`);
-        if (!response.ok) throw new Error('Crystools bypass: could not read preflight result');
-        const history = (await response.json())[promptId];
-        if (history) {
-            if (history.status?.status_str !== 'success') {
-                throw new Error('Crystools bypass preflight failed or was interrupted; main workflow was not queued');
-            }
-            return history.outputs;
-        }
-        const queueResponse = await api.fetchApi('/queue');
-        if (!queueResponse.ok) throw new Error('Crystools bypass: could not read queue');
-        const queue = await queueResponse.json();
-        const present = [...(queue.queue_running ?? []), ...(queue.queue_pending ?? [])]
-            .some(entry => entry[1] === promptId);
-        absentCount = present ? 0 : absentCount + 1;
-        if (absentCount >= 3) throw new Error('Crystools bypass preflight was removed from the queue');
-        await new Promise(resolve => setTimeout(resolve, 400));
+const literalInputs = new Map([
+    ['PrimitiveBoolean', 'value'],
+    ['PrimitiveString', 'value'],
+    ['PrimitiveInt', 'value'],
+    ['PrimitiveFloat', 'value'],
+    ['StringConstant', 'string'],
+]);
+
+function selectsMissingBranch(inputs, output) {
+    if (inputs.on_true == null && inputs.on_false == null) return true;
+    let value = inputs.value;
+    if (Array.isArray(value)) {
+        const [sourceId, slot] = value;
+        const source = output[sourceId];
+        const widgetName = literalInputs.get(source?.class_type);
+        if (slot !== 0 || !widgetName) return false;
+        value = source.inputs[widgetName];
+        if (!['boolean', 'string', 'number'].includes(typeof value)) return false;
     }
+    const empty = value == null || value === false ||
+        (typeof value === 'string' && !value.trim()) ||
+        (inputs.zero_is_empty === true && value === 0);
+    return (empty ? inputs.on_true : inputs.on_false) == null;
 }
 
 const outputClasses = new Set();
@@ -180,25 +180,9 @@ app.registerExtension({
                     const dtos = contexts.get(prompt);
                     const receiverIds = receiversFor(id, prompt.output, dtos);
                     if (!receiverIds.length) continue;
-                    const output = Object.fromEntries(dependencies(prompt.output, [id]));
-                    let decision = '__crystools_bypass_decision';
-                    while (Object.hasOwn(output, decision)) decision += '_';
-                    output[decision] = { class_type: DECISION, inputs: { value: [id, 0] } };
-                    const submitted = await originalQueue.call(this, number,
-                        { workflow: prompt.workflow, output },
-                        { ...options, partialExecutionTargets: [decision] }, ...rest);
-                    const results = await completedProbe(submitted.prompt_id);
-                    const state = results[decision]?.crystools_empty_branch?.[0];
-                    if (typeof state !== 'boolean') throw new Error('Crystools bypass: missing preflight decision');
-                    const current = await app.graphToPrompt(graph);
-                    if ((app.rootGraph ?? app.graph) !== graph ||
-                        JSON.stringify(current.output) !== JSON.stringify(prompt.output)) {
-                        throw new Error('Crystools bypass: workflow changed during preflight; run again');
-                    }
-                    prompt = current;
-                    if (!state) continue;
+                    if (!selectsMissingBranch(prompt.output[id].inputs, prompt.output)) continue;
 
-                    const currentDtos = contexts.get(current);
+                    const currentDtos = dtos;
                     const targets = new Set(receiverIds.map(targetId => currentDtos.get(targetId).node));
                     const targetIds = new Set(receiverIds);
                     for (const [targetId, dto] of currentDtos) {
