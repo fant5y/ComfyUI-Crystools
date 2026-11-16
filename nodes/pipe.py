@@ -3,6 +3,7 @@ from comfy_execution.graph import get_input_info
 from comfy_execution.graph_utils import GraphBuilder, is_link
 from nodes import NODE_CLASS_MAPPINGS
 from ..core import CATEGORY
+from ..core.optional import BYPASS
 from ..core.pipe import PipeValues, empty_value, pipe_layout
 from ._names import CLASSES
 
@@ -53,7 +54,7 @@ def edit_pipe(pipe_source: list[object] | None, values: dict[str, object],
     layout = list(inherited) + [None] * max(0, length - len(inherited))
     for index in range(length):
         value = values.get(f'any_{index + 1}')
-        if not empty_value(value):
+        if value is not BYPASS and not empty_value(value):
             pipe[index] = value
             description = layout[index] or (descriptions[index] if index < len(descriptions) else None)
             layout[index] = (
@@ -160,6 +161,8 @@ class CPipeOverrideGuard(io.ComfyNode):
 
 
 class CPipeEditInternal(io.ComfyNode):
+    CRYSTOOLS_HANDLES_BYPASS = True
+
     @classmethod
     def define_schema(cls) -> io.Schema:
         return io.Schema(
@@ -182,7 +185,7 @@ class CPipeEditInternal(io.ComfyNode):
         descriptions = list(context['layout'])
         for name, index in context.get('extracted', {}).items():
             source = values.get(name)
-            values[name] = source[index] if source is not None and index < len(source) else None
+            values[name] = source[index] if source is not None and source is not BYPASS and index < len(source) else None
         return io.NodeOutput(edit_pipe(CPipeAny, values, descriptions))
 
 
